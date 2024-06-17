@@ -4,6 +4,6 @@
 # Clang provides 'omp' and a link for 'gomp'.
 # With 'gomp' we can also use system libs.
 
-COMP_OPENMP = -DUSE_OMP -std=c++17 -target x86_64-pc-linux-gnu -fopenmp --offload-arch=gfx90a,gfx940,gfx942 -fopenmp-target-fast -fopenmp-version=51 -Wno-conditional-type-mismatch 
+COMP_OPENMP = -DUSE_OMP -std=c++17 -target x86_64-pc-linux-gnu -fopenmp --offload-arch=gfx90a -fopenmp-target-fast -fopenmp-version=51 -Wno-conditional-type-mismatch 
 LINK_OPENMP = ${ROCM4FOAM}/lib/libamdhip64.so
 
