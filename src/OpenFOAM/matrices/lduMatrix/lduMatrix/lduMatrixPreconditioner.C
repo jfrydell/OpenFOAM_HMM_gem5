@@ -28,6 +28,11 @@ License
 
 #include "lduMatrix.H"
 
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 namespace Foam
@@ -88,8 +93,14 @@ Foam::lduMatrix::preconditioner::New
 
     const dictionary& controls = e.isDict() ? e.dict() : dictionary::null;
 
+
     if (sol.matrix().symmetric())
     {
+
+	#ifdef USE_ROCTX
+        roctxRangePushA("lduMatrix::preconditioner::New:symmetric");
+        #endif
+
         auto* ctorPtr = symMatrixConstructorTable(name);
 
         if (!ctorPtr)
@@ -103,6 +114,9 @@ Foam::lduMatrix::preconditioner::New
             ) << exit(FatalIOError);
         }
 
+	#ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
         return autoPtr<lduMatrix::preconditioner>
         (
             ctorPtr
@@ -114,6 +128,10 @@ Foam::lduMatrix::preconditioner::New
     }
     else if (sol.matrix().asymmetric())
     {
+	#ifdef USE_ROCTX
+        roctxRangePushA("lduMatrix::preconditioner::New:asymmetric");
+        #endif
+
         auto* ctorPtr = asymMatrixConstructorTable(name);
 
         if (!ctorPtr)
@@ -126,6 +144,10 @@ Foam::lduMatrix::preconditioner::New
                 *asymMatrixConstructorTablePtr_
             ) << exit(FatalIOError);
         }
+
+	#ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
 
         return autoPtr<lduMatrix::preconditioner>
         (

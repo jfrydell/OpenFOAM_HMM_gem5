@@ -49,6 +49,8 @@ snGrad
     const word& name
 )
 {
+//    fprintf(stderr,"snGrad: line %d \n",__LINE__);
+
     return fv::snGradScheme<Type>::New
     (
         vf.mesh(),
@@ -93,6 +95,10 @@ snGrad
     const tmp<GeometricField<Type, fvPatchField, volMesh>>& tvf
 )
 {
+
+    //fprintf(stderr,"snGrad: line %d \n",__LINE__);
+
+
     tmp<GeometricField<Type, fvsPatchField, surfaceMesh>> SnGrad
     (
         fvc::snGrad(tvf())

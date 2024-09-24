@@ -31,14 +31,24 @@ License
 #include "error.H"
 #include "IOstreams.H"
 
+
+#ifdef USE_OMP
+#include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 const char* const Foam::pTraits<bool>::typeName = "bool";
 const char* const Foam::pTraits<bool>::componentNames[] = { "" };
 
+#pragma omp declare target
 const bool Foam::pTraits<bool>::zero = false;
 const bool Foam::pTraits<bool>::one = true;
-
+#pragma omp end declare target 
 
 // * * * * * * * * * * * * * * * * Constructors  * * * * * * * * * * * * * * //
 

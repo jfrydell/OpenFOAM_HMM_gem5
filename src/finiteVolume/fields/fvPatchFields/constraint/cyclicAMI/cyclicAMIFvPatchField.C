@@ -150,6 +150,13 @@ template<class Type>
 Foam::tmp<Foam::Field<Type>>
 Foam::cyclicAMIFvPatchField<Type>::patchNeighbourField() const
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePush("cyclicAMIFvPatchField::patchNeighbourField");
+    #endif
+
+    //fprintf(stderr,"in cyclicAMIFvPatchField::patchNeighbourField\n");
+
     const Field<Type>& iField = this->primitiveField();
 
     // By pass polyPatch to get nbrId. Instead use cyclicAMIFvPatch virtual
@@ -175,6 +182,9 @@ Foam::cyclicAMIFvPatchField<Type>::patchNeighbourField() const
     {
         tpnf.ref() = transform(forwardT(), tpnf());
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     return tpnf;
 }

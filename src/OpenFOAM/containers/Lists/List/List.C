@@ -45,10 +45,11 @@ License
 #endif
 
 #ifdef USE_MEM_POOL
+extern "C" {
 void * provide_umpire_pool(size_t N);
 void free_umpire_pool( void * data);
 bool is_umpire_pool_ptr(void *ptr);
-
+}
 //#define USE_MEM_POOL
 #endif
 
@@ -83,7 +84,7 @@ void Foam::List<T>::doResize(const label len)
         
 	
         #ifdef USE_ROCTX
-	if (len  > 10000){
+	if (len  > 5000){
 	  char roctx_name[128];
 	  sprintf(roctx_name,"resizing_%zu",sizeof(T)*len);
           roctxRangePush(roctx_name);
@@ -96,7 +97,7 @@ void Foam::List<T>::doResize(const label len)
 
 	   #ifdef USE_MEM_POOL
 
-	   if (len >= 5000 && is_contiguous<T>::value ){
+	   if (len >= 5000 /* && is_contiguous<T>::value*/ ){
 	       void * tmp_ptr = provide_umpire_pool(sizeof(T)*len);
                nv = new (tmp_ptr) T[len]; //use placement new	    
 	   }
@@ -121,7 +122,7 @@ void Foam::List<T>::doResize(const label len)
 
 
         #ifdef USE_ROCTX
-	if (len  > 10000){
+	if (len  > 5000){
            roctxRangePop();
         }
         #endif
@@ -205,7 +206,10 @@ Foam::List<T>::List(const label len, const T& val)
     {
 
 	#ifdef USE_ROCTX
-        roctxRangePush("List::List_ref");
+	if ( is_contiguous<T>::value)    
+        roctxRangePush("List::List_ref_contig");
+	else
+	roctxRangePush("List::List_ref_not_contig");
         #endif
 
     	doAlloc();
@@ -216,7 +220,7 @@ Foam::List<T>::List(const label len, const T& val)
 
 	if constexpr ( std::is_same<T,scalar>() ) {
            scalar * __restrict__ vp_ptr = (*this).begin();
-           #pragma omp target teams distribute parallel for if(target:len>10000)
+           #pragma omp target teams distribute parallel for if(len>10000)
            for (label i=0; i < len; ++i)
            {
               vp_ptr[i] = val;
@@ -224,7 +228,7 @@ Foam::List<T>::List(const label len, const T& val)
 	}
 	else if constexpr ( std::is_same<T,int>() ) {
            int * __restrict__ vp_ptr = (*this).begin();
-           #pragma omp target teams distribute parallel for if(target:len>10000)
+           #pragma omp target teams distribute parallel for if(len>10000)
            for (label i=0; i < len; ++i)
            {
               vp_ptr[i] = val;
@@ -232,7 +236,7 @@ Foam::List<T>::List(const label len, const T& val)
         }
         else if constexpr ( std::is_same<T,unsigned int>() ) {
            unsigned int * __restrict__ vp_ptr = (*this).begin();
-           #pragma omp target teams distribute parallel for if(target:len>10000)
+           #pragma omp target teams distribute parallel for if(len>10000)
            for (label i=0; i < len; ++i)
            {
               vp_ptr[i] = val;
@@ -240,15 +244,13 @@ Foam::List<T>::List(const label len, const T& val)
         }
 	else if (std::is_same_v<T,Foam::Vector<scalar>> || std::is_same_v<T,Foam::Tensor<scalar>> ) {
            T * __restrict__ vp_ptr = (*this).begin();
-           #pragma omp target teams distribute parallel for if(target:len>10000)
+           #pragma omp target teams distribute parallel for if(len>10000)
            for (label i=0; i < len; ++i)
            {
               vp_ptr[i] = val;
            }
          }
 	else{
-//	test_type<T>;
-
           List_ACCESS(T, (*this), vp);
 
 /*
@@ -290,7 +292,7 @@ Foam::List<T>::List(const label len, const Foam::zero)
 
 
         List_ACCESS(T, (*this), vp);
-        #pragma omp target teams distribute parallel for if(target:len>10000)
+        #pragma omp target teams distribute parallel for if(len>10000)
         for (label i=0; i < len; ++i)
         {
             vp[i] = Zero;
@@ -391,7 +393,7 @@ Foam::List<T>::List(const List<T>& a)
             if constexpr ( std::is_same<T,scalar>() ) {
               scalar * __restrict__ vp_ptr = (*this).begin();
               const scalar * __restrict__ ap_ptr = a.begin();
-              #pragma omp target teams distribute parallel for if(target:len > 10000) 
+              #pragma omp target teams distribute parallel for if(len > 10000) 
               for (label i = 0; i < len; ++i)
               {
                 vp_ptr[i] = ap_ptr[i];
@@ -400,7 +402,7 @@ Foam::List<T>::List(const List<T>& a)
             else if constexpr ( std::is_same<T,int>() ) {
               int * __restrict__ vp_ptr = (*this).begin();
               const int * __restrict__ ap_ptr = a.begin();
-              #pragma omp target teams distribute parallel for if(target:len > 10000) 
+              #pragma omp target teams distribute parallel for if(len > 10000) 
               for (label i = 0; i < len; ++i)
               {
                 vp_ptr[i] = ap_ptr[i];
@@ -409,7 +411,7 @@ Foam::List<T>::List(const List<T>& a)
             else if constexpr ( std::is_same<T,unsigned int>() ) {
               unsigned int * __restrict__ vp_ptr = (*this).begin();
               const unsigned int * __restrict__ ap_ptr = a.begin();
-              #pragma omp target teams distribute parallel for if(target:len > 10000) 
+              #pragma omp target teams distribute parallel for if(len > 10000) 
               for (label i = 0; i < len; ++i)
               {
                 vp_ptr[i] = ap_ptr[i];
@@ -418,7 +420,7 @@ Foam::List<T>::List(const List<T>& a)
 	    else if constexpr ( std::is_same<T,Foam::Vector<scalar>>() ) {
               T * __restrict__ vp_ptr = (*this).begin();
               const T * __restrict__ ap_ptr = a.begin();
-              #pragma omp target teams distribute parallel for if(target:len > 10000)
+              #pragma omp target teams distribute parallel for if(len > 10000)
               for (label i = 0; i < len; ++i)
               {
                 vp_ptr[i] = ap_ptr[i];
@@ -476,7 +478,7 @@ Foam::List<T>::List(List<T>& a, bool reuse)
 	    if constexpr ( std::is_same<T,scalar>() || std::is_same<T,int>() || std::is_same<T,unsigned int>() || std::is_same<T,Foam::Vector<scalar>>() ) {
               T * __restrict__ vp_ptr = (*this).begin();
               const T * __restrict__ ap_ptr = a.begin();
-              #pragma omp target teams distribute parallel for if(target:len > 10000)
+              #pragma omp target teams distribute parallel for if(len > 10000)
               for (label i = 0; i < len; ++i)
               {
                 vp_ptr[i] = ap_ptr[i];
@@ -627,7 +629,7 @@ Foam::List<T>::~List()
     {
 
         #ifdef USE_ROCTX
-        if (this->size_  > 10000){
+        if (this->size_  > 5000){
           char roctx_name[128];
           sprintf(roctx_name,"deleting_%zu",sizeof(T)*this->size_);
           roctxRangePush(roctx_name);
@@ -645,7 +647,7 @@ Foam::List<T>::~List()
 
 
 	#ifdef USE_ROCTX
-	if (this->size_  > 10000){
+	if (this->size_  > 5000){
            roctxRangePop();
 	}
         #endif
@@ -663,11 +665,31 @@ void Foam::List<T>::resize(const label len, const T& val)
     this->doResize(len);
 
     List_ACCESS(T, *this, vp);
+#if 0
     while (idx < len)
     {
         vp[idx] = val;
         ++idx;
     }
+#else
+    if constexpr ( std::is_same<T,scalar>() || std::is_same<T,label>() || std::is_same<T,Foam::Vector<scalar>>() ){
+      #pragma omp target teams distribute parallel for if( len-idx > 3000)
+      for (label i = idx; i < len; ++i)
+      {
+       vp[i] = val;
+      }
+    }
+    else
+    {
+      while (idx < len)
+      {
+        vp[idx] = val;
+        ++idx;
+      }
+    }
+#endif
+
+
 }
 
 
@@ -728,6 +750,8 @@ void Foam::List<T>::operator=(const UList<T>& a)
         #ifdef USEMEMCPY
         if (is_contiguous<T>::value)
         {
+            if (len> 10000) fprintf(stderr,"List equal memcpy :not a type for offloading , type is  %s length = %d, line=%d\n", typeid(T).name(), len,  __LINE__);
+
             std::memcpy
             (
                 static_cast<void*>(this->v_), a.v_, this->size_bytes()
@@ -744,7 +768,7 @@ void Foam::List<T>::operator=(const UList<T>& a)
            if constexpr ( std::is_same<T,scalar>() ) {
               scalar * __restrict__ vp_ptr = (*this).begin();
               const scalar * __restrict__ ap_ptr = a.begin();
-              #pragma omp target teams distribute parallel for if(target:len > 10000) 
+              #pragma omp target teams distribute parallel for if(len > 10000) 
               for (label i = 0; i < len; ++i)
               {
                 vp_ptr[i] = ap_ptr[i];
@@ -753,7 +777,7 @@ void Foam::List<T>::operator=(const UList<T>& a)
 	   else if constexpr ( std::is_same<T,int>() ) {
               int * __restrict__ vp_ptr = (*this).begin();
               const int * __restrict__ ap_ptr = a.begin();
-              #pragma omp target teams distribute parallel for if(target:len > 10000)
+              #pragma omp target teams distribute parallel for if(len > 10000)
               for (label i = 0; i < len; ++i)
               {
                 vp_ptr[i] = ap_ptr[i];
@@ -762,7 +786,7 @@ void Foam::List<T>::operator=(const UList<T>& a)
 	   else if constexpr ( std::is_same<T,unsigned int>() ) {
               unsigned int * __restrict__ vp_ptr = (*this).begin();
               const unsigned int * __restrict__ ap_ptr = a.begin();
-              #pragma omp target teams distribute parallel for if(target:len > 10000)
+              #pragma omp target teams distribute parallel for if(len > 10000)
               for (label i = 0; i < len; ++i)
               {
                 vp_ptr[i] = ap_ptr[i];
@@ -771,13 +795,14 @@ void Foam::List<T>::operator=(const UList<T>& a)
 	   else if constexpr ( std::is_same<T,Foam::Vector<scalar>>() || std::is_same<T,Foam::Tensor<scalar>>() ) {
               T * __restrict__ vp_ptr = (*this).begin();
               const T * __restrict__ ap_ptr = a.begin();
-              #pragma omp target teams distribute parallel for if(target:len > 10000)
+              #pragma omp target teams distribute parallel for if(len > 10000)
               for (label i = 0; i < len; ++i)
               {
                 vp_ptr[i] = ap_ptr[i];
               }
            }
 	   else{
+
               List_ACCESS(T, (*this), vp);
               List_CONST_ACCESS(T, a, ap);
               for (label i = 0; i < len; ++i)

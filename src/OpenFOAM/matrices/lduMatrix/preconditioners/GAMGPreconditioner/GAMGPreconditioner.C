@@ -90,7 +90,7 @@ void Foam::GAMGPreconditioner::precondition
 ) const
 {
 
-    printf("in GAMGPreconditioner::precondition\n");
+    //fprintf(stderr,"in GAMGPreconditioner::precondition\n");
 
     wA = 0.0;
     solveScalarField AwA(wA.size());

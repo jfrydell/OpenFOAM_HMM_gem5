@@ -66,12 +66,18 @@ void Foam::lduMatrix::sumDiag()
     const labelUList& l = lduAddr().lowerAddr();
     const labelUList& u = lduAddr().upperAddr();
 
-    #pragma omp target teams distribute parallel for if (target:l.size() > 10000)
-    for (label face=0; face<l.size(); face++)
+    const label loop_len = l.size();
+
+    //double t1=omp_get_wtime();
+    #pragma omp target teams distribute parallel for if (loop_len > 10000)
+    for (label face=0; face<loop_len; face++)
     {
         atomicAccumulator(Diag[l[face]]) += Lower[face];
         atomicAccumulator(Diag[u[face]]) += Upper[face];
     }
+    //double t2 = omp_get_wtime();
+    //fprintf(stderr,"rank = %d: SumDiag:  nFaces = %d, ldu time = %g\n",Pstream::myProcNo(), loop_len, t2-t1);
+
     #ifdef USE_ROCTX
     roctxRangePop();
     #endif
@@ -91,12 +97,22 @@ void Foam::lduMatrix::negSumDiag()
     const labelUList& l = lduAddr().lowerAddr();
     const labelUList& u = lduAddr().upperAddr();
 
-    #pragma omp target teams distribute parallel for if (target:l.size() > 10000)
-    for (label face=0; face<l.size(); face++)
+    const label loop_len = l.size();
+    //double t1=omp_get_wtime();
+    #pragma omp target teams distribute parallel for thread_limit(256) if (loop_len > 10000)
+    for (label face=0; face<loop_len; face+=2)
     {
-        atomicAccumulator(Diag[l[face]]) -= Lower[face];
-        atomicAccumulator(Diag[u[face]]) -= Upper[face];
+	const label nf = (loop_len-face) > 1 ? 2 : 1;
+        #pragma unroll 2
+        for ( label i = 0; i < nf; ++i){    
+          atomicAccumulator(Diag[l[face+i]]) -= Lower[face+i];
+          atomicAccumulator(Diag[u[face+i]]) -= Upper[face+i];
+	}
     }
+    //double t2 = omp_get_wtime();
+    //fprintf(stderr,"rank = %d: negSumDiag:  nFaces = %d, ldu time = %g\n",Pstream::myProcNo(), loop_len, t2-t1);
+
+
     #ifdef USE_ROCTX
     roctxRangePop();
     #endif
@@ -118,12 +134,21 @@ void Foam::lduMatrix::sumMagOffDiag
     const labelUList& l = lduAddr().lowerAddr();
     const labelUList& u = lduAddr().upperAddr();
 
-    #pragma omp target teams distribute parallel for if (target:l.size() > 10000)
-    for (label face = 0; face < l.size(); face++)
+    label loop_len = l.size();
+    //double t1=omp_get_wtime();
+    #pragma omp target teams distribute parallel for thread_limit(256) if (loop_len > 10000)
+    for (label face = 0; face < loop_len; face+=2)
     {
-        atomicAccumulator(sumOff[u[face]]) += mag(Lower[face]);
-        atomicAccumulator(sumOff[l[face]]) += mag(Upper[face]);
+	const label nf = (loop_len-face) > 1 ? 2 : 1;
+        #pragma unroll 2
+        for ( label i = 0; i < nf; ++i){
+          atomicAccumulator(sumOff[u[face+i]]) += mag(Lower[face+i]);
+          atomicAccumulator(sumOff[l[face+i]]) += mag(Upper[face+i]);
+	}
     }
+    //double t2 = omp_get_wtime();
+    //fprintf(stderr,"rank = %d: sumMagOffDiag:  nFaces = %d, ldu time = %g\n",Pstream::myProcNo(), loop_len, t2-t1);
+
     #ifdef USE_ROCTX
     roctxRangePop();
     #endif
@@ -367,13 +392,13 @@ void Foam::lduMatrix::operator*=(const scalarField& sf)
         const labelUList& u = lduAddr().upperAddr();
 
         label loop_len = upper.size(); 
-        #pragma omp target teams distribute parallel for if(target:loop_len>TARGET_CUT_OFF)
+        #pragma omp target teams distribute parallel for if(loop_len>TARGET_CUT_OFF)
         for (label face=0; face<loop_len; face++)
         {
             upper[face] *= sf[l[face]];
         }
         loop_len = lower.size();
-	#pragma omp target teams distribute parallel for if(target:loop_len>TARGET_CUT_OFF)
+	#pragma omp target teams distribute parallel for if(loop_len>TARGET_CUT_OFF)
         for (label face=0; face<loop_len; face++)
         {
             lower[face] *= sf[u[face]];

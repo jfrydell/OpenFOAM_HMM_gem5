@@ -440,8 +440,11 @@ void OpFunc                                                                    \
 )                                                                              \
 {                                                                              \
     roctxRangePush("OpFunc:TFOR_ALL_F_OP_F_OP_S");                             \
-    if constexpr ( std::is_same<Type1,scalar>() && std::is_same<Type2,scalar>() ) { \
-      TPARALLELFOR_ALL_F_OP_F_OP_S(ReturnType, res, =, Type1, f1, Op, Type2, s2)    \
+    if constexpr ( (std::is_same<Type1,scalar>() &&                            \
+                    std::is_same<Type2,scalar>() ) ||                          \
+		   (std::is_same<Type1,Foam::Vector<scalar>>() &&              \
+		    std::is_same<Type2,Foam::Vector<scalar>>() ) ) {           \
+      TPARALLELFOR_ALL_F_OP_F_OP_S(ReturnType, res, =, Type1, f1, Op, Type2, s2)  \
     } else {                                                                   \
       TFOR_ALL_F_OP_F_OP_S(ReturnType, res, =, Type1, f1, Op, Type2, s2)       \
     }                                                                          \

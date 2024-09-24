@@ -25,7 +25,9 @@ License
 
 \*---------------------------------------------------------------------------*/
 
-
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
 
 #ifndef OMP_UNIFIED_MEMORY_REQUIRED
 #pragma omp requires unified_shared_memory
@@ -47,13 +49,16 @@ void Foam::lduInterfaceField::addToInternalField
     const Field<Type>& vals
 ) const
 {
-    
+
+    #ifdef USE_ROCTX
+    roctxRangePush("lduInterfaceField:addToInternalField");
+    #endif
 
     if (add)
     {
         //forAll(faceCells, elemi)
 	const label loop_len = faceCells.size();
-        #pragma omp target teams distribute parallel for if(loop_len>5000)
+        #pragma omp target teams distribute parallel for thread_limit(128)  if(loop_len>3000)
         for (label elemi = 0; elemi < loop_len; ++elemi)
         {
             atomicAccumulator(result[faceCells[elemi]]) += (coeffs[elemi]*vals[elemi]);
@@ -63,12 +68,17 @@ void Foam::lduInterfaceField::addToInternalField
     {
         //forAll(faceCells, elemi)
         const label loop_len = faceCells.size();
-        #pragma omp target teams distribute parallel for if(loop_len>5000)
+        #pragma omp target teams distribute parallel for thread_limit(128) if(loop_len>3000)
         for (label elemi = 0; elemi < loop_len; ++elemi)
         {
             atomicAccumulator(result[faceCells[elemi]]) -= (coeffs[elemi]*vals[elemi]);
         }
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
 }
 
 

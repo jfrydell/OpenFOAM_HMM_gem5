@@ -242,6 +242,11 @@ void Foam::Field<Type>::map
     const labelUList& mapAddressing
 )
 {
+    #ifdef USE_ROCTX
+    roctxRangePush("Foam::Field<Type>::map");
+    #endif
+    
+
     Field<Type>& f = *this;
 
     if (f.size() != mapAddressing.size())
@@ -251,7 +256,10 @@ void Foam::Field<Type>::map
 
     if (mapF.size() > 0)
     {
-        forAll(f, i)
+        //forAll(f, i)
+	const label loop_len = f.size();
+        //#pragma omp target teams distribute parallel for if(loop_len > 10000)
+	for (label i = 0; i < loop_len; ++i)
         {
             const label mapI = mapAddressing[i];
 
@@ -261,6 +269,9 @@ void Foam::Field<Type>::map
             }
         }
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 
@@ -284,6 +295,10 @@ void Foam::Field<Type>::map
     const scalarListList& mapWeights
 )
 {
+    #ifdef USE_ROCTX
+    roctxRangePush("Foam::Field<Type>::map-2");
+    #endif
+
     Field<Type>& f = *this;
 
     if (f.size() != mapAddressing.size())
@@ -310,6 +325,9 @@ void Foam::Field<Type>::map
             f[i] += localWeights[j]*mapF[localAddrs[j]];
         }
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 
@@ -468,6 +486,8 @@ void Foam::Field<Type>::rmap
     const labelUList& mapAddressing
 )
 {
+    fprintf(stderr,"file = %s line = %d\n",__FILE__, __LINE__);
+
     Field<Type>& f = *this;
 
     forAll(mapF, i)
@@ -502,6 +522,8 @@ void Foam::Field<Type>::rmap
     const UList<scalar>& mapWeights
 )
 {
+    fprintf(stderr,"file = %s line = %d\n",__FILE__, __LINE__);
+	
     Field<Type>& f = *this;
 
     f = Zero;
@@ -529,7 +551,18 @@ void Foam::Field<Type>::rmap
 template<class Type>
 void Foam::Field<Type>::negate()
 {
-    TFOR_ALL_F_OP_OP_F(Type, *this, =, -, Type, *this)
+
+    #ifdef USE_ROCTX
+    roctxRangePush("Foam::Field<Type>::negate");
+    #endif
+
+    //TFOR_ALL_F_OP_OP_F(Type, *this, =, -, Type, *this)
+    TPARALLELFOR_ALL_F_OP_OP_F(Type, *this, =, -, Type, *this)
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
 }
 
 
@@ -559,8 +592,13 @@ void Foam::Field<Type>::replace
     const UList<cmptType>& sf
 )
 {
-    TFOR_ALL_F_OP_FUNC_S_F(Type, *this, ., replace, const direction, d,
+    //LG AMD 
+    
+    TPARALLELFOR_ALL_F_OP_FUNC_S_F(Type, *this, ., replace, const direction, d,
         cmptType, sf)
+
+    //TFOR_ALL_F_OP_FUNC_S_F(Type, *this, ., replace, const direction, d,
+    //    cmptType, sf)
 }
 
 
@@ -583,8 +621,12 @@ void Foam::Field<Type>::replace
     const cmptType& c
 )
 {
-    TFOR_ALL_F_OP_FUNC_S_S(Type, *this, ., replace, const direction, d,
+    //LG AMD
+    TPARALLELFOR_ALL_F_OP_FUNC_S_S(Type, *this, ., replace, const direction, d,
         cmptType, c)
+
+    //TFOR_ALL_F_OP_FUNC_S_S(Type, *this, ., replace, const direction, d,
+    //    cmptType, c)
 }
 
 

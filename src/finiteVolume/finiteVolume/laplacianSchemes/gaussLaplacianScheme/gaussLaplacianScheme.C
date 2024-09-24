@@ -31,6 +31,11 @@ License
 #include "fvcGrad.H"
 #include "fvMatrices.H"
 
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 namespace Foam
@@ -52,6 +57,12 @@ gaussLaplacianScheme<Type, GType>::fvmLaplacianUncorrected
     const GeometricField<Type, fvPatchField, volMesh>& vf
 )
 {
+
+    //fprintf(stderr,"file = %s, line = %d\n",__FILE__, __LINE__);
+    #ifdef USE_ROCTX
+    roctxRangePush("gaussLaplacianScheme::fvmLaplacianUncorrected");
+    #endif
+
     tmp<fvMatrix<Type>> tfvm
     (
         new fvMatrix<Type>
@@ -85,6 +96,10 @@ gaussLaplacianScheme<Type, GType>::fvmLaplacianUncorrected
             fvm.boundaryCoeffs()[patchi] = -pGamma*pvf.gradientBoundaryCoeffs();
         }
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     return tfvm;
 }
@@ -162,6 +177,13 @@ gaussLaplacianScheme<Type, GType>::fvmLaplacian
     const GeometricField<Type, fvPatchField, volMesh>& vf
 )
 {
+
+    fprintf(stderr,"file = %s, line = %d\n",__FILE__, __LINE__);
+
+    #ifdef USE_ROCTX
+    roctxRangePush("gaussLaplacianScheme::fvmLaplacian");
+    #endif
+
     const fvMesh& mesh = this->mesh();
 
     const surfaceVectorField Sn(mesh.Sf()/mesh.magSf());
@@ -196,6 +218,10 @@ gaussLaplacianScheme<Type, GType>::fvmLaplacian
     {
         fvm.faceFluxCorrectionPtr() = tfaceFluxCorrection.ptr();
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     return tfvm;
 }

@@ -31,6 +31,10 @@ License
 #include "processorGAMGInterface.H"
 #include "cyclicLduInterface.H"
 
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
 // * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
 
 void Foam::GAMGAgglomeration::agglomerateLduAddressing
@@ -38,6 +42,11 @@ void Foam::GAMGAgglomeration::agglomerateLduAddressing
     const label fineLevelIndex
 )
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePush("GAMGAgglomeration::agglomerateLduAddressing");
+    #endif
+
     const lduMesh& fineMesh = meshLevel(fineLevelIndex);
     const lduAddressing& fineMeshAddr = fineMesh.lduAddr();
 
@@ -420,6 +429,9 @@ void Foam::GAMGAgglomeration::agglomerateLduAddressing
             << " nFaces:" << nCoarseFaces
             << endl;
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 
@@ -433,6 +445,9 @@ void Foam::GAMGAgglomeration::procAgglomerateLduAddressing
     const label levelIndex
 )
 {
+
+
+
     const lduMesh& myMesh = meshLevels_[levelIndex-1];
 
 
@@ -493,6 +508,7 @@ void Foam::GAMGAgglomeration::procAgglomerateLduAddressing
     {
         clearLevel(levelIndex);
     }
+
 }
 
 

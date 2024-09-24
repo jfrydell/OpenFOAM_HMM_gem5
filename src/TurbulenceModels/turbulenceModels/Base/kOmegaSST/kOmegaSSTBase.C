@@ -144,6 +144,8 @@ void kOmegaSSTBase<BasicEddyViscosityModel>::correctNut
     const volScalarField& S2
 )
 {
+    //printf("I AM IN kOmegaSSTBase<BasicEddyViscosityModel>::correctNut\n");
+
     #ifdef USE_ROCTX
     roctxRangePush("kOmegaSSTBase_correct_turb_visc");
     #endif
@@ -552,8 +554,20 @@ void kOmegaSSTBase<BasicEddyViscosityModel>::correct()
 
     volScalarField::Internal divU(fvc::div(fvc::absolute(this->phi(), U)));
 
+
+
     tmp<volTensorField> tgradU = fvc::grad(U);
+    
+
+    #ifdef USE_ROCTX
+    roctxRangePush("BEVM_::correct_A_4");
+    #endif
+    
     volScalarField S2(2*magSqr(symm(tgradU())));
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     #ifdef USE_ROCTX
     roctxRangePop();
@@ -570,8 +584,16 @@ void kOmegaSSTBase<BasicEddyViscosityModel>::correct()
     );
     volScalarField::Internal G(this->GName(), nut*GbyNu0);
 
+    #ifdef USE_ROCTX
+    roctxRangePush("BEVM_::correct_B_3");
+    #endif
+
     // Update omega and G at the wall
     omega_.boundaryFieldRef().updateCoeffs();
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     volScalarField CDkOmega
     (

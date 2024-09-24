@@ -93,6 +93,8 @@ Foam::solverPerformance Foam::PCG::scalarSolve
     const direction cmpt
 ) const
 {
+    //fprintf(stderr,"in PCG, line=%d\n", __LINE__);
+
     #ifdef USE_ROCTX
     roctxRangePush("PCG::scalarSolve");
     #endif
@@ -103,6 +105,9 @@ Foam::solverPerformance Foam::PCG::scalarSolve
         lduMatrix::preconditioner::getName(controlDict_) + typeName,
         fieldName_
     );
+
+    //fprintf(stderr,"in PCG, line=%d\n", __LINE__);
+
 
     label nCells = psi.size();
 
@@ -121,15 +126,18 @@ Foam::solverPerformance Foam::PCG::scalarSolve
     roctxRangePush("PCG::Amul");
     #endif
 
-
+    //fprintf(stderr,"in PCG, line=%d\n", __LINE__); 
     // --- Calculate A.psi
     matrix_.Amul(wA, psi, interfaceBouCoeffs_, interfaces_, cmpt);
-    
+    //fprintf(stderr,"in PCG, line=%d\n", __LINE__);
+
     #ifdef USE_ROCTX
     roctxRangePop();
     #endif
     
-    
+    //fprintf(stderr,"in PCG, line=%d\n", __LINE__);
+
+
     // --- Calculate initial residual field
     solveScalarField rA(source - wA);
     solveScalar* __restrict__ rAPtr = rA.begin();
@@ -149,6 +157,7 @@ Foam::solverPerformance Foam::PCG::scalarSolve
         Info<< "   Normalisation factor = " << normFactor << endl;
     }
 
+    //fprintf(stderr,"in PCG, line=%d\n", __LINE__);
 
     #ifdef USE_ROCTX
     roctxRangePush("PCG::gSumMag");
@@ -163,8 +172,12 @@ Foam::solverPerformance Foam::PCG::scalarSolve
     roctxRangePop();
     #endif
 
+    //fprintf(stderr,"in PCG, line=%d\n", __LINE__);
 
     solverPerf.finalResidual() = solverPerf.initialResidual();
+
+    //fprintf(stderr,"in PCG, line=%d\n", __LINE__);
+
 
     // --- Check convergence, solve if not converged
     if
@@ -216,7 +229,7 @@ Foam::solverPerformance Foam::PCG::scalarSolve
 
             if (solverPerf.nIterations() == 0)
             {
-                  #pragma omp target teams distribute parallel for if(target:nCells>20000) //LG1 AMD
+                  #pragma omp target teams distribute parallel for if(nCells>20000) //LG1 AMD
                   for (label cell=0; cell<nCells; cell++)
                   {
                       pAPtr[cell] = wAPtr[cell];
@@ -225,7 +238,7 @@ Foam::solverPerformance Foam::PCG::scalarSolve
             else
             {
                   solveScalar beta = wArA/wArAold;
-                  #pragma omp target teams distribute parallel for  if(target:nCells>20000) //LG1 AMD
+                  #pragma omp target teams distribute parallel for  if(nCells>20000) //LG1 AMD
                   for (label cell=0; cell<nCells; cell++)
                   {
                       pAPtr[cell] = wAPtr[cell] + beta*pAPtr[cell];
@@ -269,7 +282,7 @@ Foam::solverPerformance Foam::PCG::scalarSolve
             roctxRangePush("PCG::update psi aA");
             #endif
 
-            #pragma omp target teams distribute parallel for  if(target:nCells>20000) //LG1 AMD
+            #pragma omp target teams distribute parallel for  if(nCells>20000) //LG1 AMD
             for (label cell=0; cell<nCells; cell++)
             {
                 psiPtr[cell] += alpha*pAPtr[cell];
@@ -301,12 +314,18 @@ Foam::solverPerformance Foam::PCG::scalarSolve
         );
     }
 
+    //fprintf(stderr,"in PCG, line=%d\n", __LINE__);
+
+
     matrix().setResidualField
     (
         ConstPrecisionAdaptor<scalar, solveScalar>(rA)(),
         fieldName_,
         false
     );
+
+    //fprintf(stderr,"in PCG, line=%d\n", __LINE__);
+
 
     //LG1  using roctx marker
     #ifdef USE_ROCTX

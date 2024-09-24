@@ -99,15 +99,153 @@ Foam::fv::gaussGrad<Type>::gradf
     Field<GradType>& igGrad = gGrad;
     const Field<Type>& issf = ssf;
 
-    
+    label loop_len = owner.size();
     //forAll(owner, facei)
-    #pragma omp target teams distribute parallel for if(target:owner.size()>10000 )
-    for (label facei = 0; facei <  owner.size(); ++facei) 
+    //
+#if 1
+    #pragma omp target teams distribute parallel for  if(loop_len>10000 )
+    for (label facei = 0; facei <  loop_len; facei+=2) 
     {
-        const GradType Sfssf = Sf[facei]*issf[facei];
-        atomicAccumulator(igGrad[owner[facei]]) += Sfssf;
-        atomicAccumulator(igGrad[neighbour[facei]]) -= Sfssf;
+	const label nf = (loop_len-facei) > 1 ? 2 : 1;
+        #pragma unroll 2
+        for ( uint32_t i = 0; i < nf; ++i){    
+          const GradType Sfssf = Sf[facei+i]*issf[facei+i];
+          atomicAccumulator(igGrad[owner[facei+i]]) += Sfssf;
+          atomicAccumulator(igGrad[neighbour[facei+i]]) -= Sfssf;
+	}
     }
+#else
+
+
+    static label *offsets = NULL;
+    static label *face_list = NULL;
+    static label *face_sign = NULL;
+
+
+
+    if (face_list == NULL){
+       fprintf(stderr, " GAUSS GRAD: setting up\n");
+
+       offsets = new label[igGrad.size()+1];
+       label *count = new label[igGrad.size()];
+
+       for (label i = 0; i < igGrad.size(); ++i ) count[i] = 0;
+
+       for (label facei=0; facei < owner.size(); ++facei)
+       {
+        const label own = owner[facei];
+        const label nei = neighbour[facei];
+        count[own]++;
+        count[nei]++;
+       }
+
+       offsets[0] = 0;
+       for (label i = 0; i < igGrad.size(); ++i ){
+         offsets[i+1] = offsets[i]+count[i];
+       }
+       face_list = new label[offsets[igGrad.size()]];
+       face_sign = new label[offsets[igGrad.size()]];
+
+       //list faces for each cell
+       for (label i = 0; i < igGrad.size(); ++i ) count[i] = 0;
+
+       label *ptr_to_face_list, *ptr_to_face_sign;
+
+       for (label facei=0; facei < owner.size(); ++facei){
+
+        const label own = owner[facei];
+        const label nei = neighbour[facei];
+
+	/* face_list  has pairs [own] [nei]   this can be used to determine a sign
+	 * for accumulating Sfssf   */
+        ptr_to_face_list = &face_list[ offsets[own] + count[own] ];
+	ptr_to_face_sign = &face_sign[ offsets[own] + count[own] ];
+        ptr_to_face_list[0] = facei;
+	ptr_to_face_sign[0] = 1.0;
+        count[own]++;
+
+        ptr_to_face_list = &face_list[ offsets[nei] + count[nei] ];
+	ptr_to_face_sign = &face_sign[ offsets[nei] + count[nei] ];
+        ptr_to_face_list[0] = facei;
+	ptr_to_face_sign[0] = -1.0;
+        count[nei]++;
+       }
+       delete[] count;
+    
+       label nCells = igGrad.size();
+
+
+       const cellList& cells = mesh.cells();
+
+       fprintf(stderr,"owner.size() = %d\n",owner.size());
+
+       for (label celli = 0; celli < 2; ++celli){
+
+         fprintf(stderr,"celli  = %d\n",celli);
+
+         for (label f = 0; f < mesh.cells()[celli].size(); ++f){
+              fprintf(stderr,"%d\t", mesh.cells()[celli][f]);
+         }
+         fprintf(stderr,"\n");
+
+         label *ptr_to_face_list = &face_list[offsets[celli]];
+         const label nFaces = offsets[celli+1] - offsets[celli];
+         for ( label f = 0; f < nFaces; ++f){
+           label facei = ptr_to_face_list[f];
+           fprintf(stderr,"%d\t",facei);
+         }
+         fprintf(stderr,"\n");
+       }
+    }
+    
+    //double t1 = omp_get_wtime();
+
+    #if 0
+    const label nCells = igGrad.size();
+    #pragma omp target teams distribute parallel for thread_limit(256) if(nCells>10000 )
+    for (label celli = 0; celli < nCells; ++celli){
+
+        const label *ptr_to_face_list = &face_list[offsets[celli]];
+	const label *ptr_to_face_sign = &face_sign[offsets[celli]]; 
+        const label nFaces = offsets[celli+1] - offsets[celli];
+
+        #pragma unroll 2
+        for ( label f = 0; f < nFaces; ++f){
+	   const label facei = ptr_to_face_list[f];
+	   const GradType Sfssf = Sf[facei]*issf[facei]*ptr_to_face_sign[f];
+           igGrad[celli] += Sfssf;
+	}
+    }
+    /*
+    for (label celli = 0; celli < nCells; ++celli){
+
+       for (label f = 0; f < mesh.cells()[celli].size(); ++f){
+          const label facei = mesh.cells()[celli][f];
+	  const GradType Sfssf = Sf[facei]*issf[facei];
+          igGrad[celli] += Sfssf; //how to subtruct for neighbour ?
+       }
+    }
+    */
+
+    #else
+    #pragma omp target teams distribute parallel for  if(loop_len>10000 )
+    for (label facei = 0; facei <  loop_len; facei+=4)
+    {
+        const label nf = (loop_len-facei) > 3 ? 4 : loop_len-facei;
+        #pragma unroll 4
+        for ( label i = 0; i < nf; ++i){
+          const GradType Sfssf = Sf[facei+i]*issf[facei+i];
+          atomicAccumulator(igGrad[owner[facei+i]]) += Sfssf;
+          atomicAccumulator(igGrad[neighbour[facei+i]]) -= Sfssf;
+        }
+    }
+    #endif
+
+    //double t2 = omp_get_wtime();
+    //fprintf(stderr,"rank = %d, nCells = %d loop time  = %g\n",Pstream::myProcNo(), igGrad.size(), (t2-t1));
+
+#endif
+
 
     label   mesh_boundary_size =  mesh.boundary().size();
     //forAll(mesh.boundary(), patchi)
@@ -123,7 +261,7 @@ Foam::fv::gaussGrad<Type>::gradf
 
         //forAll(mesh.boundary()[patchi], facei)
         label mesh_boundary_patch_size = mesh.boundary()[patchi].size();
-         #pragma omp target teams distribute parallel for if (target:mesh_boundary_patch_size>10000)
+         #pragma omp target teams distribute parallel for if (mesh_boundary_patch_size>10000)
         for (label facei = 0; facei < mesh_boundary_patch_size; ++facei) 
         {
             atomicAccumulator(igGrad[pFaceCells[facei]]) += pSf[facei]*pssf[facei];

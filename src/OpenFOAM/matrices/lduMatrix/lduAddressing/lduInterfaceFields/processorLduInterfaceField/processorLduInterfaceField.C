@@ -29,6 +29,10 @@ License
 #include "processorLduInterfaceField.H"
 #include "diagTensorField.H"
 
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 namespace Foam
@@ -45,6 +49,10 @@ void Foam::processorLduInterfaceField::transformCoupleField
     const direction cmpt
 ) const
 {
+    #ifdef USE_ROCTX
+    roctxRangePush("processorLduInterfaceField::transformCoupleField");
+    #endif
+
     if (doTransform())
     {
         if (forwardT().size() == 1)
@@ -56,6 +64,9 @@ void Foam::processorLduInterfaceField::transformCoupleField
             f *= pow(diag(forwardT())().component(cmpt), rank());
         }
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 

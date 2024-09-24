@@ -198,6 +198,10 @@ void Foam::PstreamDetail::allReduce
         {
             *requestID = -1;
         }
+	#ifdef MPI_BARRIER_BEFORE_ALLREDUCE
+           MPI_Barrier(PstreamGlobals::MPICommunicators_[comm]);
+        #endif
+
         if
         (
             MPI_Allreduce

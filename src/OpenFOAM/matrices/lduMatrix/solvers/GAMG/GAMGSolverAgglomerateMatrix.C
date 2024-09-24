@@ -30,6 +30,20 @@ License
 #include "processorLduInterfaceField.H"
 #include "processorGAMGInterfaceField.H"
 
+#ifdef USE_OMP
+#include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+
+
 // * * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * //
 
 void Foam::GAMGSolver::agglomerateMatrix
@@ -39,6 +53,11 @@ void Foam::GAMGSolver::agglomerateMatrix
     const lduInterfacePtrsList& coarseMeshInterfaces
 )
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePush("GAMGSolver::agglomerateMatrix");
+    #endif
+
     // Get fine matrix
     const lduMatrix& fineMatrix = matrixLevel(fineLevelIndex);
 
@@ -56,11 +75,16 @@ void Foam::GAMGSolver::agglomerateMatrix
         lduMatrix& coarseMatrix = matrixLevels_[fineLevelIndex];
 
 
+	 #ifdef USE_ROCTX
+         roctxRangePush("GAMGSolver::agglomerateMatrix_A");
+         #endif
+
         // Coarse matrix diagonal initialised by restricting the finer mesh
         // diagonal. Note that we size with the cached coarse nCells and not
         // the actual coarseMesh size since this might be dummy when processor
         // agglomerating.
         scalarField& coarseDiag = coarseMatrix.diag(nCoarseCells);
+
 
         agglomeration_.restrictField
         (
@@ -129,6 +153,10 @@ void Foam::GAMGSolver::agglomerateMatrix
         const boolList& faceFlipMap =
             agglomeration_.faceFlipMap(fineLevelIndex);
 
+        #ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
+
         // Check if matrix is asymmetric and if so agglomerate both upper
         // and lower coefficients ...
         if (fineMatrix.hasLower())
@@ -141,7 +169,10 @@ void Foam::GAMGSolver::agglomerateMatrix
             scalarField& coarseUpper = coarseMatrix.upper(nCoarseFaces);
             scalarField& coarseLower = coarseMatrix.lower(nCoarseFaces);
 
-            forAll(faceRestrictAddr, fineFacei)
+            //forAll(faceRestrictAddr, fineFacei)
+    	    const label loop_len = faceRestrictAddr.size();
+        //    #pragma omp target teams distribute parallel for if(loop_len > 10000) thread_limit(128)
+	    for (label fineFacei = 0; fineFacei < loop_len; ++fineFacei) 
             {
                 label cFace = faceRestrictAddr[fineFacei];
 
@@ -151,18 +182,23 @@ void Foam::GAMGSolver::agglomerateMatrix
                     // coarse face it is being agglomerated into
                     if (!faceFlipMap[fineFacei])
                     {
+         //               #pragma omp atomic    
                         coarseUpper[cFace] += fineUpper[fineFacei];
+	//		#pragma omp atomic
                         coarseLower[cFace] += fineLower[fineFacei];
                     }
                     else
                     {
+	//		#pragma omp atomic    
                         coarseUpper[cFace] += fineLower[fineFacei];
+	//		#pragma omp atomic
                         coarseLower[cFace] += fineUpper[fineFacei];
                     }
                 }
                 else
                 {
                     // Add the fine face coefficients into the diagonal.
+	//	    #pragma omp atomic
                     coarseDiag[-1 - cFace] +=
                         fineUpper[fineFacei] + fineLower[fineFacei];
                 }
@@ -176,22 +212,30 @@ void Foam::GAMGSolver::agglomerateMatrix
             // Coarse matrix upper coefficients
             scalarField& coarseUpper = coarseMatrix.upper(nCoarseFaces);
 
-            forAll(faceRestrictAddr, fineFacei)
+	    const label loop_len = faceRestrictAddr.size();
+            //forAll(faceRestrictAddr, fineFacei)
+            #pragma omp target teams distribute parallel for if(loop_len > 10000) thread_limit(128)
+	    for (label fineFacei = 0; fineFacei < loop_len; ++fineFacei)
             {
                 label cFace = faceRestrictAddr[fineFacei];
 
                 if (cFace >= 0)
                 {
+		    #pragma omp atomic	
                     coarseUpper[cFace] += fineUpper[fineFacei];
                 }
                 else
                 {
                     // Add the fine face coefficient into the diagonal.
+		    #pragma omp atomic
                     coarseDiag[-1 - cFace] += 2*fineUpper[fineFacei];
                 }
             }
         }
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 

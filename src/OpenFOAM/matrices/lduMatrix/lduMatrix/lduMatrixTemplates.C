@@ -40,6 +40,9 @@ Description
 #include "AtomicAccumulator.H"
 #include "macros.H"
 
+
+// #define USE_OPT_LDU
+
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 template<class Type>
@@ -65,14 +68,89 @@ Foam::tmp<Foam::Field<Type>> Foam::lduMatrix::H(const Field<Type>& psi) const
         const scalar* __restrict__ upperPtr = upper().begin();
 
         const label nFaces = upper().size();
-   
-        #pragma omp target teams distribute parallel for thread_limit(64)  if(target:nFaces>10000) 
-        for (label face=0; face<nFaces; face++)
+       
+        #ifdef USE_OPT_LDU
+        static label *repetition_count_ofsetts = NULL;
+
+        static label counter=0;
+        if (repetition_count_ofsetts == NULL){
+
+          label *repetition_count = new (std::align_val_t(256)) label[nFaces];
+          label face = 0;
+          while (face < nFaces){
+            const label l_val = lPtr[face] ;
+            label local_counter=0;
+            while (counter<nFaces){
+                 if (l_val == lPtr[face+local_counter])
+                    local_counter++;
+                 else
+                    break;
+            }
+            repetition_count[counter] = local_counter;
+            face += local_counter;
+            counter++;
+         }
+         repetition_count_ofsetts = new (std::align_val_t(256)) label[counter+1];
+         repetition_count_ofsetts[0] = 0;
+         for (label i=1; i <= counter; i++)
+           repetition_count_ofsetts[i] = repetition_count_ofsetts[i-1]+repetition_count[i-1];
+
+         delete[] repetition_count;
+       }
+       #endif
+
+
+
+    //    double t1 = omp_get_wtime();	
+
+
+        #ifdef USE_OPT_LDU
+
+
+         #pragma omp target teams distribute parallel for
+         for (label i=0; i < counter; i++){
+	    Type sum; //need to figure out how to properly initialize
+
+	    //if constexpr ( std::is_same<Type,scalar>() ) sum = 0;
+	    //else sum = Foam::vector<scalar>(0,0,0);
+
+            const label face_start = repetition_count_ofsetts[i];
+            const label face_stop = repetition_count_ofsetts[i+1];
+
+            const label l_val = lPtr[face_start];
+            const Type psiPtr_l_val = psiPtr[l_val];
+
+            #pragma unroll 2
+            for (label face = face_start; face < face_stop; ++face){
+
+                const label u_val = uPtr[face];
+
+		atomicAccumulator(HpsiPtr[u_val]) -= (lowerPtr[face+i]*psiPtr_l_val);
+		sum                               +=  upperPtr[face+i]*psiPtr[u_val];
+	    }
+	    atomicAccumulator(HpsiPtr[l_val]) -= (sum);
+         }
+       
+        #else
+
+        #pragma omp target teams distribute parallel for thread_limit(256)  if(nFaces>10000) 
+        for (label face=0; face<nFaces; face+=2)
         {
-            
-            atomicAccumulator(HpsiPtr[uPtr[face]]) -= (lowerPtr[face]*psiPtr[lPtr[face]]);
-            atomicAccumulator(HpsiPtr[lPtr[face]]) -= (upperPtr[face]*psiPtr[uPtr[face]]);
+	    const label nf = (nFaces-face) > 1 ? 2 : 1;
+            #pragma unroll 2
+            for ( label i = 0; i < nf; ++i){
+              const label l_val = lPtr[face+i] ;
+              const label u_val = uPtr[face+i];
+              atomicAccumulator(HpsiPtr[u_val]) -= (lowerPtr[face+i]*psiPtr[l_val]);
+              atomicAccumulator(HpsiPtr[l_val]) -= (upperPtr[face+i]*psiPtr[u_val]);
+	    }
         }
+
+        #endif
+
+
+//	double t2 = omp_get_wtime();
+//	fprintf(stderr,"rank=%d: nFaces = %d, line=%d, loop time = %g\n",Pstream::myProcNo(), nFaces, t2-t1);
     }
 
     return tHpsi;
@@ -104,7 +182,7 @@ Foam::lduMatrix::faceH(const Field<Type>& psi) const
         Field<Type> & faceHpsi = tfaceHpsi.ref();
 
 	label loop_len = l.size();
-        #pragma omp target teams distribute parallel for if(target:loop_len>10000)
+        #pragma omp target teams distribute parallel for if(loop_len>10000)
         for (label face=0; face<loop_len; face++)
         {
             faceHpsi[face] =

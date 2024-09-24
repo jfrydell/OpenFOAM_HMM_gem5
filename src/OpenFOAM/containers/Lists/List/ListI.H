@@ -32,10 +32,12 @@ License
 #endif
 
 #ifdef USE_MEM_POOL
+extern "C"
+{
 void * provide_umpire_pool(size_t N);
 void free_umpire_pool( void * data);
 bool is_umpire_pool_ptr(void *ptr);
-
+}
 //#define USE_MEM_POOL
 #endif
 
@@ -57,7 +59,7 @@ inline void Foam::List<T>::doAlloc()
 //	   fprintf(stderr,"doAlloc: calling mem allocator size_ = %d\n",this->size_);
 
            #ifdef USE_MEM_POOL
-           if (this->size_ >= 5000 && is_contiguous<T>::value){
+           if (this->size_ >= 5000 /* && is_contiguous<T>::value */){
 	       void * tmp_ptr = provide_umpire_pool(sizeof(T)*this->size_);
                this->v_ = new (tmp_ptr) T[this->size_]; //use placement new 
 	   }
@@ -180,14 +182,20 @@ inline void Foam::List<T>::clear()
         #endif
 
         #ifdef USE_MEM_POOL
+        //printf("clear:: before call to is_umpire_pool_ptr; this-v_ = %p\n",this->v_);
+
         bool umpr_ptr =  is_umpire_pool_ptr( reinterpret_cast<void*>(this->v_) );
+        //printf("clear:: umpr_ptr = %d\n",(int) umpr_ptr);
 
 
-        if (umpr_ptr == true) //AMD
+        if (umpr_ptr == true){ //AMD
+	   //printf("clear:: calling free_umpire_pool\n");
            free_umpire_pool( reinterpret_cast<void*> (this->v_) );
-        else    
+	}
+        else{   
+	  // printf("clear:: delete\n");	
            delete[] this->v_;
-
+	}
         #else
 	    delete[] this->v_;
         #endif

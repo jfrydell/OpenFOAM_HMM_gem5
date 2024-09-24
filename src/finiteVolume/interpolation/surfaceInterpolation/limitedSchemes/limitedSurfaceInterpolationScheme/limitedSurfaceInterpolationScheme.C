@@ -31,6 +31,19 @@ License
 #include "surfaceFields.H"
 #include "coupledFvPatchField.H"
 
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+#ifdef USE_OMP
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
+
 // * * * * * * * * * * * * * * * * * Selectors * * * * * * * * * * * * * * * //
 
 template<class Type>
@@ -140,13 +153,21 @@ Foam::limitedSurfaceInterpolationScheme<Type>::weights
     tmp<surfaceScalarField> tLimiter
 ) const
 {
+    #ifdef USE_ROCTX
+    roctxRangePush("limitedSurfaceInterpolationScheme::weights");
+    #endif
+
+
     // Note that here the weights field is initialised as the limiter
     // from which the weight is calculated using the limiter value
     surfaceScalarField& Weights = tLimiter.ref();
 
     scalarField& pWeights = Weights.primitiveFieldRef();
 
-    forAll(pWeights, face)
+    //forAll(pWeights, face)
+    const label loop_len = pWeights.size();
+    #pragma omp target teams distribute parallel for if (loop_len> 10000)
+    for (label face = 0; face < loop_len; ++face)
     {
         pWeights[face] =
             pWeights[face]*CDweights[face]
@@ -163,13 +184,20 @@ Foam::limitedSurfaceInterpolationScheme<Type>::weights
         const scalarField& pCDweights = CDweights.boundaryField()[patchi];
         const scalarField& pFaceFlux = faceFlux_.boundaryField()[patchi];
 
-        forAll(pWeights, face)
+        //forAll(pWeights, face)
+	const label loop_len = pWeights.size();
+        #pragma omp target teams distribute parallel for if (loop_len> 10000)
+        for (label face = 0; face < loop_len; ++face)	
         {
             pWeights[face] =
                 pWeights[face]*pCDweights[face]
               + (1.0 - pWeights[face])*pos0(pFaceFlux[face]);
         }
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     return tLimiter;
 }

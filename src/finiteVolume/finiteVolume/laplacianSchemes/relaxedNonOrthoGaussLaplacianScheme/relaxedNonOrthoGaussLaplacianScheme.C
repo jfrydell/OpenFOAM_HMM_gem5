@@ -31,6 +31,11 @@ License
 #include "fvcGrad.H"
 #include "fvMatrices.H"
 
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 namespace Foam
@@ -52,6 +57,8 @@ relaxedNonOrthoGaussLaplacianScheme<Type, GType>::fvmLaplacianUncorrected
     const GeometricField<Type, fvPatchField, volMesh>& vf
 )
 {
+    fprintf(stderr,"file = %s, line = %d\n",__FILE__, __LINE__);
+
     tmp<fvMatrix<Type>> tfvm
     (
         new fvMatrix<Type>
@@ -161,6 +168,12 @@ relaxedNonOrthoGaussLaplacianScheme<Type, GType>::fvmLaplacian
     const GeometricField<Type, fvPatchField, volMesh>& vf
 )
 {
+
+    fprintf(stderr,"file = %s, line = %d\n",__FILE__, __LINE__);
+    #ifdef USE_ROCTX
+    roctxRangePush("relaxedNonOrthoGaussLaplacianScheme::fvmLaplacian");
+    #endif
+
     const fvMesh& mesh = this->mesh();
 
     typedef GeometricField<Type, fvsPatchField, surfaceMesh> SType;
@@ -225,6 +238,11 @@ relaxedNonOrthoGaussLaplacianScheme<Type, GType>::fvmLaplacian
         fvm.faceFluxCorrectionPtr() = trelaxedCorrection.ptr();
     }
 
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
+
     return tfvm;
 }
 
@@ -237,6 +255,11 @@ relaxedNonOrthoGaussLaplacianScheme<Type, GType>::fvcLaplacian
     const GeometricField<Type, fvPatchField, volMesh>& vf
 )
 {
+
+
+    fprintf(stderr,"file = %s, line = %d\n",__FILE__, __LINE__);
+
+
     const fvMesh& mesh = this->mesh();
 
     const surfaceVectorField Sn(mesh.Sf()/mesh.magSf());

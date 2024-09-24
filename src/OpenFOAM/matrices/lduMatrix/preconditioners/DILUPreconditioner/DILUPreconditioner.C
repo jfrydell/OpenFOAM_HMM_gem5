@@ -70,7 +70,28 @@ Foam::DILUPreconditioner::DILUPreconditioner
     rD_(sol.matrix().diag().size())
 {
     const scalarField& diag = sol.matrix().diag();
+    #ifdef USE_ROCTX
+    roctxRangePushA("DILUPreconditioner_std::copy");
+    #endif
+
+#if 0
+    //AMD why not a simple for loop ?
     std::copy(diag.begin(), diag.end(), rD_.begin());
+#else
+    const label loop_len = diag.size();
+    const solveScalar* __restrict__ diagPtr = diag.begin();
+    solveScalar* __restrict__ rD_Ptr = rD_.begin();
+
+    #pragma omp target teams distribute parallel for if (loop_len>3000)
+    for (label i = 0; i < loop_len; ++i){
+      rD_Ptr[i] = diagPtr[i];	    
+    }
+
+#endif
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     calcReciprocalD(rD_, sol.matrix());
 }
@@ -84,6 +105,11 @@ void Foam::DILUPreconditioner::calcReciprocalD
     const lduMatrix& matrix
 )
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePushA("DILUPreconditioner::calcReciprocalD");
+    #endif
+
     solveScalar* __restrict__ rDPtr = rD.begin();
 
     const label* const __restrict__ uPtr = matrix.lduAddr().upperAddr().begin();
@@ -92,6 +118,35 @@ void Foam::DILUPreconditioner::calcReciprocalD
     const scalar* const __restrict__ upperPtr = matrix.upper().begin();
     const scalar* const __restrict__ lowerPtr = matrix.lower().begin();
 
+    const label nCells = rD.size();
+
+#if 1
+    solveScalarField rD_temp(rD.size());
+    solveScalar* __restrict__ rD_temp_Ptr = rD_temp.begin();
+
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
+    for (label cell=0; cell<nCells; cell++)
+	    rD_temp_Ptr[cell] = 0.0;
+
+    //calculate sum[cell] +=  U[cell][j]*L[j][cell]*D[j]
+    label nFaces = matrix.upper().size();
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
+    for (label face=0; face<nFaces; face++)
+    {
+        #pragma omp atomic    
+        rD_temp_Ptr[uPtr[face]] += upperPtr[face]*lowerPtr[face]/rDPtr[lPtr[face]];
+    }
+
+    // Calculate the reciprocal of the preconditioned diagonal
+    //inv_D[cell] = 1 / ( D[cell]- sum[cell] )
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
+    for (label cell=0; cell<nCells; cell++)
+    {
+        rDPtr[cell] = 1.0/(rDPtr[cell] - rD_temp_Ptr[cell]);
+    }
+
+
+#else
     label nFaces = matrix.upper().size();
     for (label face=0; face<nFaces; face++)
     {
@@ -99,13 +154,23 @@ void Foam::DILUPreconditioner::calcReciprocalD
     }
 
 
-    // Calculate the reciprocal of the preconditioned diagonal
-    const label nCells = rD.size();
 
+
+
+
+    // Calculate the reciprocal of the preconditioned diagonal
+
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
     for (label cell=0; cell<nCells; cell++)
     {
         rDPtr[cell] = 1.0/rDPtr[cell];
     }
+#endif
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
 }
 
 
@@ -140,13 +205,14 @@ void Foam::DILUPreconditioner::precondition
     const label nFaces = solver_.matrix().upper().size();
     const label nFacesM1 = nFaces - 1;
 
-    #pragma omp target teams distribute parallel for if(target:nCells>TARGET_CUT_OFF)
+#if 0    
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
     for (label cell=0; cell<nCells; cell++)
     {
         wAPtr[cell] = rDPtr[cell]*rAPtr[cell];
     }
 
-    //LG1 wAPtr is on LHS and RHS ? are indices different ? can parallelize ? 
+
     for (label face=0; face<nFaces; face++)
     {
         const label sface = losortPtr[face];
@@ -159,6 +225,42 @@ void Foam::DILUPreconditioner::precondition
         wAPtr[lPtr[face]] -=
             rDPtr[lPtr[face]]*upperPtr[face]*wAPtr[uPtr[face]];
     }
+#else
+
+    solveScalarField wA_temp(wA.size());
+    solveScalar* __restrict__ wA_temp_Ptr = wA_temp.begin();
+
+
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
+    for (label cell=0; cell<nCells; cell++)
+    {
+        wAPtr[cell] = rDPtr[cell]*rAPtr[cell];
+	wA_temp_Ptr[cell] = wAPtr[cell];
+    }
+
+    //wA_temp = wA;
+
+    #pragma omp target teams distribute parallel for if(nFaces>TARGET_CUT_OFF) 
+    for (label face=0; face<nFaces; face++)
+    {
+        const label sface = losortPtr[face];
+        #pragma omp atomic
+        wA_temp_Ptr[uPtr[sface]] -=
+            rDPtr[uPtr[sface]]*lowerPtr[sface]*wAPtr[lPtr[sface]];
+    }
+
+    #pragma omp target teams distribute parallel for if(nFaces>TARGET_CUT_OFF)
+    for (label face=nFacesM1; face>=0; face--)
+    {
+        const label lptr_index = lPtr[face];
+        #pragma omp atomic
+        wAPtr[lptr_index] -=
+            rDPtr[lptr_index]*upperPtr[face]*wA_temp_Ptr[uPtr[face]];
+    }
+
+#endif
+
+
     #ifdef USE_ROCTX
     roctxRangePop();
     #endif
@@ -196,7 +298,7 @@ void Foam::DILUPreconditioner::preconditionT
     const label nFaces = solver_.matrix().upper().size();
     const label nFacesM1 = nFaces - 1;
 
-    #pragma omp target teams distribute parallel for if(target:nCells>TARGET_CUT_OFF)
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
     for (label cell=0; cell<nCells; cell++)
     {
         wTPtr[cell] = rDPtr[cell]*rTPtr[cell];

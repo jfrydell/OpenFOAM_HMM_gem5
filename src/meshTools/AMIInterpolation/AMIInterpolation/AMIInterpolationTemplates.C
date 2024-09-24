@@ -29,6 +29,25 @@ License
 #include "profiling.H"
 #include "mapDistribute.H"
 
+
+#include "AtomicAccumulator.H"
+#include "macros.H"
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+#ifdef USE_OMP
+  #include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
+
+
+
 // * * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * //
 
 template<class Type, class CombineOp>
@@ -41,6 +60,11 @@ void Foam::AMIInterpolation::interpolateToTarget
 ) const
 {
     addProfiling(ami, "AMIInterpolation::interpolateToTarget");
+
+
+    #ifdef USE_ROCTX
+    roctxRangePush("AMIInterpolation::interpolateToTarget");
+    #endif
 
     if (fld.size() != srcAddress_.size())
     {
@@ -73,10 +97,93 @@ void Foam::AMIInterpolation::interpolateToTarget
     {
         const mapDistribute& map = srcMapPtr_();
 
-        List<Type> work(fld);
-        map.distribute(work);
+	#ifdef USE_ROCTX
+        roctxRangePush("AMIInterpolation::interpolateToTarget_2");
+        #endif
 
-        forAll(result, facei)
+        List<Type> work(fld);
+
+        #ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
+
+	#ifdef USE_ROCTX
+        roctxRangePush("AMIInterpolation::interpolateToTarget_3");
+        #endif
+
+	map.distribute(work);
+
+
+        #ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
+
+#if 1
+if constexpr ( std::is_same_v<Type,Foam::Vector<scalar>> ){
+
+        const label loop_len = result.size();
+
+        #pragma omp target teams distribute parellel for if(loop_len > 5000) 
+        for (label facei = 0; facei < loop_len; ++facei)
+        {
+            if (tgtWeightsSum_[facei] < lowWeightCorrection_)
+            {
+                result[facei] = defaultValues[facei];
+            }
+            else
+            {
+                const labelList& faces = tgtAddress_[facei];
+                const scalarList& weights = tgtWeights_[facei];
+
+                Type result_tmp  = vector::zero;
+                Type& tmp = (Type&) result_tmp;
+
+                //forAll(faces, i)
+                const label loop_len2 = faces.size();
+		#pragma unroll 4
+		for (label i = 0; i < loop_len2; ++i)  //parallelize within a team 
+                {
+                    cop(tmp /* result[facei] */, facei, work[faces[i]], weights[i]);
+		}
+		result[facei] = result_tmp;
+	    }
+	}
+
+}
+else if constexpr ( std::is_same_v<Type,scalar> ){
+
+        const label loop_len = result.size();
+        #pragma omp target teams distribute parellel for if(loop_len > 5000)
+        for (label facei = 0; facei < loop_len; ++facei)
+        {
+            if (tgtWeightsSum_[facei] < lowWeightCorrection_)
+            {
+                result[facei] = defaultValues[facei];
+            }
+            else
+            {
+                const labelList& faces = tgtAddress_[facei];
+                const scalarList& weights = tgtWeights_[facei];
+
+                Type result_tmp = 0.0;
+                Type& tmp = (Type&) result_tmp;
+
+                //forAll(faces, i)
+                const label loop_len2 = faces.size();
+                #pragma unroll 4
+                for (label i = 0; i < loop_len2; ++i)  //parallelize within a team
+                {
+                    cop(tmp /* result[facei] */, facei, work[faces[i]], weights[i]);
+                }
+                result[facei] = tmp;
+            }
+        }
+
+}
+else{
+#endif
+	const label loop_len = result.size();
+	for (label facei = 0; facei < loop_len; ++facei)
         {
             if (tgtWeightsSum_[facei] < lowWeightCorrection_)
             {
@@ -93,10 +200,15 @@ void Foam::AMIInterpolation::interpolateToTarget
                 }
             }
         }
+}
+
     }
     else
     {
-        forAll(result, facei)
+	    
+        //forAll(result, facei)
+        const label loop_len = result.size();
+        for (label facei = 0; facei < loop_len; ++facei)		
         {
             if (tgtWeightsSum_[facei] < lowWeightCorrection_)
             {
@@ -114,6 +226,9 @@ void Foam::AMIInterpolation::interpolateToTarget
             }
         }
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 
@@ -127,6 +242,11 @@ void Foam::AMIInterpolation::interpolateToSource
 ) const
 {
     addProfiling(ami, "AMIInterpolation::interpolateToSource");
+
+    #ifdef USE_ROCTX
+    roctxRangePush("AMIInterpolation::interpolateToSource");
+    #endif
+
 
     if (fld.size() != tgtAddress_.size())
     {
@@ -157,13 +277,78 @@ void Foam::AMIInterpolation::interpolateToSource
 
     if (distributed())
     {
+	//fprintf(stderr,"AMIInterpolation::interpolateToSource in distributed\n");    
         const mapDistribute& map = tgtMapPtr_();
 
         List<Type> work(fld);
         map.distribute(work);
 
-        forAll(result, facei)
-        {
+
+        if constexpr ( std::is_same_v<Type,Foam::Vector<scalar>> ){
+          const label loop_len = result.size();
+          #pragma omp target teams distribute parallel for thread_limit(64)  if (loop_len > 5000) 
+          for (label facei = 0; facei < loop_len; ++facei)
+          {
+            if (srcWeightsSum_[facei] < lowWeightCorrection_)
+            {
+                result[facei] = defaultValues[facei];
+            }
+            else
+            {
+                const labelList& faces = srcAddress_[facei];
+                const scalarList& weights = srcWeights_[facei];
+
+                Type result_tmp  = vector::zero;
+		Type& tmp = (Type&) result_tmp;
+
+                //forAll(faces, i)
+		const label loop_len2 = faces.size();
+	        #pragma unroll 4
+	        for (label i = 0; i < loop_len2; ++i)	
+                {
+                    cop( tmp /*result[facei]*/, facei, work[faces[i]], weights[i]);
+                }
+		result[facei] = result_tmp;
+            }
+          }
+        }
+	else if constexpr ( std::is_same_v<Type,scalar> ){
+          const label loop_len = result.size();
+          #pragma omp target teams distribute parallel for thread_limit(64)  if (loop_len > 5000)
+          for (label facei = 0; facei < loop_len; ++facei)
+          {
+            if (srcWeightsSum_[facei] < lowWeightCorrection_)
+            {
+                result[facei] = defaultValues[facei];
+            }
+            else
+            {
+                const labelList& faces = srcAddress_[facei];
+                const scalarList& weights = srcWeights_[facei];
+
+                Type result_tmp  = 0.0;
+                Type& tmp = (Type&) result_tmp;
+
+                //forAll(faces, i)
+                const label loop_len2 = faces.size();
+                #pragma unroll 4
+                for (label i = 0; i < loop_len2; ++i)
+                {
+                    cop( tmp /*result[facei]*/, facei, work[faces[i]], weights[i]);
+                }
+                result[facei] = result_tmp;
+            }
+          }
+        }
+
+	else
+	{
+//	fprintf(stderr,"in file=%s in line=%d, 	typeid(Type).name()=%s\n",__FILE__, __LINE__, typeid(Type).name());
+          //forAll(result, facei)
+          const label loop_len = result.size();
+          #pragma omp parallel for if(loop_len > 500)
+          for (label facei = 0; facei < loop_len; ++facei)
+          {
             if (srcWeightsSum_[facei] < lowWeightCorrection_)
             {
                 result[facei] = defaultValues[facei];
@@ -178,10 +363,13 @@ void Foam::AMIInterpolation::interpolateToSource
                     cop(result[facei], facei, work[faces[i]], weights[i]);
                 }
             }
-        }
+          }
+	}
     }
     else
     {
+        //fprintf(stderr,"AMIInterpolation::interpolateToSource not in distributed\n");
+
         forAll(result, facei)
         {
             if (srcWeightsSum_[facei] < lowWeightCorrection_)
@@ -200,6 +388,9 @@ void Foam::AMIInterpolation::interpolateToSource
             }
         }
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 

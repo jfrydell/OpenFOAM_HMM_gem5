@@ -219,6 +219,10 @@ void Foam::processorFaPatchField<Type>::updateInterfaceMatrix
     const Pstream::commsTypes commsType
 ) const
 {
+
+    fprintf(stderr,"file=%s line=%d\n",__FILE__,__LINE__);
+
+
     solveScalarField pnf
     (
         procPatch_.receive<solveScalar>(commsType, this->size())()
@@ -284,6 +288,9 @@ void Foam::processorFaPatchField<Type>::updateInterfaceMatrix
     (
         procPatch_.receive<Type>(commsType, this->size())()
     );
+
+
+    fprintf(stderr,"file=%s line=%d\n",__FILE__,__LINE__);
 
     // Multiply the field by coefficients and add into the result
 

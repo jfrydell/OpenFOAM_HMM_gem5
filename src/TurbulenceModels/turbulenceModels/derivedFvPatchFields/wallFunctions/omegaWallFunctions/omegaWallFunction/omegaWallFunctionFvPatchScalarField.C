@@ -32,6 +32,10 @@ License
 #include "fvMatrix.H"
 #include "addToRunTimeSelectionTable.H"
 
+#ifndef OMP_UNIFIED_MEMORY_REQUIRED
+#pragma omp requires unified_shared_memory
+#define OMP_UNIFIED_MEMORY_REQUIRED
+#endif
 
 #ifdef USE_ROCTX
 #include <roctracer/roctx.h>
@@ -212,10 +216,24 @@ void Foam::omegaWallFunctionFvPatchScalarField::calculate
     const scalar kappa = wallCoeffs_.kappa();
     const scalar yPlusLam = wallCoeffs_.yPlusLam();
 
+
+     #ifdef USE_ROCTX
+     roctxRangePush("omegaWallFunctionFvPatchScalarField::calculate");
+     #endif
+
     // Set omega and G
-    forAll(nutw, facei)
+    //forAll(nutw, facei)
+    const label loop_len = nutw.size();
+
+    auto patch_faceCells_ptr = patch.faceCells(); //AMD needed to enable target region to work .... 
+
+
+    #pragma omp target teams distribute parallel for thread_limit(128) if(loop_len > 1000)
+    for (label facei = 0; facei < loop_len; ++facei)
     {
-        const label celli = patch.faceCells()[facei];
+        //const label celli = patch.faceCells()[facei];
+	const label celli = patch_faceCells_ptr[facei];
+
         const scalar yPlus = Cmu25*y[facei]*sqrt(k[celli])/nuw[facei];
         const scalar w = cornerWeights[facei];
 
@@ -231,10 +249,12 @@ void Foam::omegaWallFunctionFvPatchScalarField::calculate
             {
                 if (yPlus > yPlusLam)
                 {
+		    #pragma omp atomic 	
                     omega0[celli] += w*omegaLog;
                 }
                 else
                 {
+		    #pragma omp atomic 	
                     omega0[celli] += w*omegaVis;
                 }
                 break;
@@ -242,6 +262,7 @@ void Foam::omegaWallFunctionFvPatchScalarField::calculate
 
             case blenderType::BINOMIAL:
             {
+		#pragma omp atomic    
                 omega0[celli] +=
                     w*pow
                     (
@@ -254,6 +275,7 @@ void Foam::omegaWallFunctionFvPatchScalarField::calculate
             case blenderType::MAX:
             {
                 // (PH:Eq. 27)
+		#pragma omp atomic
                 omega0[celli] += max(omegaVis, omegaLog);
                 break;
             }
@@ -264,6 +286,7 @@ void Foam::omegaWallFunctionFvPatchScalarField::calculate
                 const scalar Gamma = 0.01*pow4(yPlus)/(1 + 5*yPlus);
                 const scalar invGamma = scalar(1)/(Gamma + ROOTVSMALL);
 
+		#pragma omp atomic
                 omega0[celli] +=
                     w*(omegaVis*exp(-Gamma) + omegaLog*exp(-invGamma));
                 break;
@@ -277,6 +300,7 @@ void Foam::omegaWallFunctionFvPatchScalarField::calculate
                 const scalar b2 =
                     pow(pow(omegaVis, 1.2) + pow(omegaLog, 1.2), 1.0/1.2);
 
+		#pragma omp atomic
                 omega0[celli] += phiTanh*b1 + (1 - phiTanh)*b2;
                 break;
             }
@@ -284,6 +308,7 @@ void Foam::omegaWallFunctionFvPatchScalarField::calculate
 
         if (!(blender_ == blenderType::STEPWISE) || yPlus > yPlusLam)
         {
+	    #pragma omp atomic	
             G0[celli] +=
                 w
                *(nutw[facei] + nuw[facei])
@@ -292,6 +317,9 @@ void Foam::omegaWallFunctionFvPatchScalarField::calculate
                /(kappa*y[facei]);
         }
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 
@@ -450,6 +478,8 @@ void Foam::omegaWallFunctionFvPatchScalarField::updateCoeffs()
         return;
     }
 
+    //fprintf(stderr,"updateCoeffs: file=%s line=%d\n",__FILE__, __LINE__);
+
     const auto& turbModel = db().lookupObject<turbulenceModel>
     (
         IOobject::groupName
@@ -464,7 +494,17 @@ void Foam::omegaWallFunctionFvPatchScalarField::updateCoeffs()
     if (patch().index() == master_)
     {
         createAveragingWeights();
+
+        #ifdef USE_ROCTX
+        roctxRangePush("omegaWallFunctionFvPatchScalarField::call_calculateTurbulenceFields");
+        #endif
+
         calculateTurbulenceFields(turbModel, G(true), omega(true));
+
+        #ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
+
     }
 
     const scalarField& G0 = this->G();
@@ -476,13 +516,29 @@ void Foam::omegaWallFunctionFvPatchScalarField::updateCoeffs()
 
     FieldType& omega = const_cast<FieldType&>(internalField());
 
-    forAll(*this, facei)
+
+    #ifdef USE_ROCTX
+    roctxRangePush("omegaWallFunctionFvPatchScalarField::updateCoeffs_loop");
+    #endif
+
+    auto patch_faceCells = patch().faceCells();
+
+    //forAll(*this, facei)
+    const label loop_len = (*this).size();
+    //fprintf (stderr,"loop_len = %d\n",loop_len);
+    #pragma omp target teams distribute parallel for if(loop_len > 5000)  
+    for (label facei = 0; facei < loop_len; ++facei)
     {
-        const label celli = patch().faceCells()[facei];
+        //const label celli = patch().faceCells()[facei];
+	const label celli = patch_faceCells[facei];
 
         G[celli] = G0[celli];
         omega[celli] = omega0[celli];
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     fvPatchField<scalar>::updateCoeffs();
 }
@@ -497,6 +553,8 @@ void Foam::omegaWallFunctionFvPatchScalarField::updateWeightedCoeffs
     {
         return;
     }
+
+    fprintf(stderr,"in omegaWallFunctionFvPatchScalarField::updateWeightedCoeffs line=%d file=%s\n",__LINE__, __FILE__);
 
     const auto& turbModel = db().lookupObject<turbulenceModel>
     (

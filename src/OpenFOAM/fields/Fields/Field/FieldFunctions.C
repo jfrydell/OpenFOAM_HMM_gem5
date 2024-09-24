@@ -223,17 +223,29 @@ void magSqr
     Field<typename typeOfMag<Type>::type>& res,
     const UList<Type>& f
 )
-{	
+{
+    #ifdef USE_ROCTX
+    roctxRangePushA("magSqr:TFOR_ALL_F_OP_FUNC_F");
+    #endif
+
     typedef typename typeOfMag<Type>::type magType;
     if constexpr ( std::is_same<Type,double>() ) {
        TPARALLELFOR_ALL_F_OP_FUNC_F_ARITHMETIC(magType, res, =, magSqr, double, f)
     }
-    else if constexpr ( std::is_same<Type,double>() ) {
+    else if constexpr ( std::is_same<Type,float>() ) {
        TPARALLELFOR_ALL_F_OP_FUNC_F_ARITHMETIC(magType, res, =, magSqr, float, f)
     }
+    else if constexpr ( std::is_same<Type,Foam::SymmTensor<double>>() ) {
+       TPARALLELFOR_ALL_F_OP_FUNC_F_ARITHMETIC(magType, res, =, magSqr, Foam::SymmTensor<double>, f)
+    }
     else {
+       fprintf(stderr,"magSqr: magType = %s  Type = %s\n", typeid(magType).name(), typeid(Type).name());
        TFOR_ALL_F_OP_FUNC_F(magType, res, =, magSqr, Type, f)
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 template<class Type>
@@ -275,7 +287,11 @@ void mag
     else if constexpr ( std::is_same<Type,float>() ) {
       TPARALLELFOR_ALL_F_OP_FUNC_F_ARITHMETIC(magType, res, =, mag, float, f)
     }
+    else if constexpr ( std::is_same<Type,Foam::Vector<scalar>>() ) {
+      TPARALLELFOR_ALL_F_OP_FUNC_F_ARITHMETIC(magType, res, =, mag, Type, f)
+    }
     else {
+      fprintf(stderr,"mag: magType = %s  Type = %s\n", typeid(magType).name(), typeid(Type).name());	    
       TFOR_ALL_F_OP_FUNC_F(magType, res, =, mag, Type, f)
     }
 }
@@ -379,8 +395,19 @@ tmp<Field<typename Field<Type>::cmptType>> cmptMin(const tmp<Field<Type>>& tf)
 template<class Type>
 void cmptAv(Field<typename Field<Type>::cmptType>& res, const UList<Type>& f)
 {
+    #ifdef USE_ROCTX
+    roctxRangePushA("cmptAv:TFOR_ALL_F_OP_FUNC_F");
+    #endif
     typedef typename Field<Type>::cmptType cmptType;
-    TFOR_ALL_F_OP_FUNC_F(cmptType, res, =, cmptAv, Type, f)
+    //if constexpr ( std::is_same<Type,scalar>() ) {
+       TPARALLELFOR_ALL_F_OP_FUNC_F_ARITHMETIC(cmptType, res, =, cmptAv, Type, f)
+    //}
+    //else{
+    //  TFOR_ALL_F_OP_FUNC_F(cmptType, res, =, cmptAv, Type, f)
+   // }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 template<class Type>
@@ -534,7 +561,7 @@ Type sum(const UList<Type>& f)
     if (f.size())
     {
 	#ifdef USE_ROCTX
-        roctxRangePushA("min:TFOR_ALL_S_OP_FUNC_F_S");
+        roctxRangePushA("TFOR_ALL_S_OP_FUNC_F_S");
         #endif
 
         if constexpr ( std::is_same<Type,double>() ) {
@@ -544,6 +571,7 @@ Type sum(const UList<Type>& f)
            TPARALLELFOR_ALL_S_OP_FUNC_REDUCTION_F_ARITHMETIC(solveType, Sum, +=, solveType, float, f)
         }
         else {
+           fprintf(stderr,"sum:  typeid(solveType).name() = %s   typeid(Type).name() = %s\n",typeid(solveType).name() , typeid(Type).name());		
            TFOR_ALL_S_OP_FUNC_F(solveType, Sum, +=, solveType, Type, f)
         }
 
@@ -627,12 +655,13 @@ sumProd(const UList<Type>& f1, const UList<Type>& f2)
     {
         if constexpr ( std::is_same<Type,double>() || std::is_same<Type,float>() ) {
 
-          printf("executing sumProd as a loop f1.size = %d\n", reinterpret_cast<int> (f1.size()) );
+          fprintf(stderr,"executing sumProd as a loop f1.size = %d\n", reinterpret_cast<int> (f1.size()) );
 
           for (label i = 0; i < f1.size(); ++i)
              result += f1[i]*f2[i];
         }
         else {
+	  fprintf(stderr,"sumProd - offload me ! line=%d file=%s\n",__LINE__, __FILE__); 	
           TFOR_ALL_S_OP_F_OP_F(prodType, result, +=, Type, f1, &&, Type, f2)
         }
     }
@@ -677,6 +706,7 @@ sumSqr(const UList<Type>& f)
            TPARALLELFOR_ALL_S_OP_FUNC_REDUCTION_F_ARITHMETIC(prodType, result, +=, sqr, float, f)
         }
         else {
+           fprintf(stderr,"sumSqr:  typeid(prodType).name() = %s   typeid(Type).name() = %s\n",typeid(prodType).name() , typeid(Type).name());
            TFOR_ALL_S_OP_FUNC_F(prodType, result, +=, sqr, Type, f)
         }
     }
@@ -709,6 +739,7 @@ sumMag(const UList<Type>& f)
            TPARALLELFOR_ALL_S_OP_FUNC_REDUCTION_F_ARITHMETIC(magType, result, +=, mag, float, f)
         }
         else {
+	  fprintf(stderr,"sumMag:  typeid(magType).name() = %s   typeid(Type).name() = %s\n",typeid(magType).name() , typeid(Type).name());
           TFOR_ALL_S_OP_FUNC_F(magType, result, +=, mag, Type, f)
         }
     }
@@ -813,8 +844,18 @@ Type gAverage
     const label comm
 )
 {
+    #ifdef USE_ROCTX
+    roctxRangePushA("gAverage_sum");
+    #endif
+
     label n = f.size();
     Type s = sum(f);
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
+
     sumReduce(s, n, Pstream::msgType(), comm);
 
     if (n > 0)
@@ -933,10 +974,10 @@ void OpFunc                                                                    \
 )                                                                              \
 {                                                                              \
     typedef typename product<Type, Form>::type productType;                    \
-    /* roctxRangePushA("TFOR_ALL_F_OP_F_OP_S");  */                                 \
+    roctxRangePushA("TFOR_ALL_F_OP_F_OP_S");                                   \
     TFOR_ALL_F_OP_F_OP_S                                                       \
         (productType, res, =,Type, f1, Op, Form, static_cast<const Form&>(vs)) \
-    /* roctxRangePop();  */                                                     \
+    roctxRangePop();                                                           \
 }                                                                              \
                                                                                \
 template<class Type, class Form, class Cmpt, direction nCmpt>                  \

@@ -29,6 +29,11 @@ License
 #include "symGaussSeidelSmoother.H"
 #include "PrecisionAdaptor.H"
 
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 namespace Foam
@@ -142,6 +147,11 @@ void Foam::symGaussSeidelSmoother::smooth
         label fStart;
         label fEnd = ownStartPtr[0];
 
+
+	#ifdef USE_ROCTX
+        roctxRangePush("symGaussSeidelSmoother::smooth_sweep");
+        #endif
+
         for (label celli=0; celli<nCells; celli++)
         {
             // Start and end of this row
@@ -197,6 +207,9 @@ void Foam::symGaussSeidelSmoother::smooth
 
             psiPtr[celli] = psii;
         }
+	#ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
     }
 }
 

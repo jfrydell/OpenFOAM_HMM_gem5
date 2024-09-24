@@ -25,6 +25,11 @@ License
 
 \*---------------------------------------------------------------------------*/
 
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
 #include "calculatedProcessorFvPatchField.H"
 
 // * * * * * * * * * * * * * * * * Constructors  * * * * * * * * * * * * * * //
@@ -142,6 +147,9 @@ void Foam::calculatedProcessorFvPatchField<Type>::initEvaluate
     const Pstream::commsTypes commsType
 )
 {
+    fprintf(stderr," Foam::calculatedProcessorFvPatchField<Type>::initEvaluate %s %d\n", __FILE__,  __LINE__);
+
+
     if (Pstream::parRun())
     {
         if (!is_contiguous<Type>::value)
@@ -227,6 +235,9 @@ void Foam::calculatedProcessorFvPatchField<Type>::initInterfaceMatrixUpdate
 {
     // Bypass patchInternalField since uses fvPatch addressing
 
+    fprintf(stderr," Foam::calculatedProcessorFvPatchField<Type>::initInterfaceMatrixUpdate %s %d\n", __FILE__,  __LINE__);
+
+
     const labelList& fc = lduAddr.patchAddr(patchId);
 
     scalarSendBuf_.setSize(fc.size());
@@ -286,6 +297,11 @@ void Foam::calculatedProcessorFvPatchField<Type>::addToInternalField
     const solveScalarField& vals
 ) const
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePush("calculatedProcessorFvPatchField:addToInternalField");
+    #endif
+
     const labelUList& faceCells = this->procInterface_.faceCells();
 
     if (add)
@@ -302,6 +318,11 @@ void Foam::calculatedProcessorFvPatchField<Type>::addToInternalField
             result[faceCells[elemI]] -= coeffs[elemI]*vals[elemI];
         }
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
 }
 
 

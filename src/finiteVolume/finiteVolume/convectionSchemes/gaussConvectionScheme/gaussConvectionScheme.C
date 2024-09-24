@@ -95,6 +95,9 @@ gaussConvectionScheme<Type>::fvmDiv
     const surfaceScalarField& weights = tweights();
 
 
+    #ifdef USE_ROCTX
+    roctxRangePush("fvmDiv_dim_x_dim");
+    #endif
     tmp<fvMatrix<Type>> tfvm
     (
         new fvMatrix<Type>
@@ -103,9 +106,19 @@ gaussConvectionScheme<Type>::fvmDiv
             faceFlux.dimensions()*vf.dimensions()
         )
     );
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
+    #ifdef USE_ROCTX
+    roctxRangePush("fvmDiv_tfvm.ref");
+    #endif
 
     fvMatrix<Type>& fvm = tfvm.ref();
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     #ifdef USE_ROCTX
     roctxRangePush("fvmDiv_low");

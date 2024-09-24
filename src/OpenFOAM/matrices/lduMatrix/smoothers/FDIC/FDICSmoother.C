@@ -30,6 +30,21 @@ License
 #include "DICPreconditioner.H"
 #include "PrecisionAdaptor.H"
 
+// #define FDIC_PARALLEL_SMOOTH
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+#ifdef USE_OMP
+#include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 namespace Foam
@@ -112,6 +127,11 @@ void Foam::FDICSmoother::smooth
     solveScalarField rA(rD_.size());
     solveScalar* __restrict__ rAPtr = rA.begin();
 
+#ifdef FDIC_PARALLEL_SMOOTH
+    solveScalarField rA_temp(rA.size());
+    solveScalar* __restrict__ rA_temp_Ptr = rA_temp.begin();
+#endif
+
     for (label sweep=0; sweep<nSweeps; sweep++)
     {
         matrix_.residual
@@ -124,11 +144,30 @@ void Foam::FDICSmoother::smooth
             cmpt
         );
 
-        forAll(rA, i)
+
+        const label loop_len = rA.size();
+        //forAll(rA, i)
+        #pragma omp target teams distribute parallel for if(loop_len > 10000)
+	for (label i=0; i < loop_len; i++)
         {
             rA[i] *= rD_[i];
         }
 
+#ifdef FDIC_PARALLEL_SMOOTH
+        rA_temp = rA;
+
+	const label nFaces = matrix_.upper().size();
+        for (label face=0; face<nFaces; face++)
+        {
+            rA_temp_Ptr[uPtr[face]] -= rDuUpperPtr[face]*rAPtr[lPtr[face]];
+        }
+
+        const label nFacesM1 = nFaces - 1;
+        for (label face=nFacesM1; face>=0; face--)
+        {
+            rAPtr[lPtr[face]] -= rDlUpperPtr[face]*rA_temp_Ptr[uPtr[face]];
+        }
+#else	
         const label nFaces = matrix_.upper().size();
         for (label face=0; face<nFaces; face++)
         {
@@ -140,6 +179,7 @@ void Foam::FDICSmoother::smooth
         {
             rAPtr[lPtr[face]] -= rDlUpperPtr[face]*rAPtr[uPtr[face]];
         }
+#endif
 
         psi += rA;
     }

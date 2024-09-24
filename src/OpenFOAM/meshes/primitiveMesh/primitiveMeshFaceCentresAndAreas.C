@@ -36,6 +36,16 @@ Description
 #include "primitiveMesh.H"
 #include "primitiveMeshTools.H"
 
+
+#ifdef USE_OMP
+  #include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
+
 // * * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * //
 
 void Foam::primitiveMesh::calcFaceCentresAndAreas() const
@@ -74,6 +84,7 @@ void Foam::primitiveMesh::calcFaceCentresAndAreas() const
 
 // * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
 
+//#pragma omp declare target 
 const Foam::vectorField& Foam::primitiveMesh::faceCentres() const
 {
     if (!faceCentresPtr_)
@@ -96,6 +107,6 @@ const Foam::vectorField& Foam::primitiveMesh::faceAreas() const
 
     return *faceAreasPtr_;
 }
-
+//#pragma omp end declare target
 
 // ************************************************************************* //

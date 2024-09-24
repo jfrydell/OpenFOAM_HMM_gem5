@@ -43,6 +43,7 @@ fvmLaplacian                                                                   \
     const GeometricField<Type, fvPatchField, volMesh>& vf                      \
 )                                                                              \
 {                                                                              \
+    printf("HELLLLLLOOOO\n");                                                  \
     const fvMesh& mesh = this->mesh();                                         \
                                                                                \
     typedef GeometricField<Type, fvsPatchField, surfaceMesh> SType;            \

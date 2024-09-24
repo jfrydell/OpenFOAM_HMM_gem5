@@ -119,12 +119,20 @@ Foam::solverPerformance Foam::PBiCGStab::scalarSolve
     solveScalarField rA(source - yA);
     solveScalar* __restrict__ rAPtr = rA.begin();
 
+    #ifdef USE_ROCTX
+    roctxRangePushA("PBiCGStab_setResidualField");
+    #endif
+
     matrix().setResidualField
     (
         ConstPrecisionAdaptor<scalar, solveScalar>(rA)(),
         fieldName_,
         true
     );
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     // --- Calculate normalisation factor
     const solveScalar normFactor = this->normFactor(psi, source, yA, pA);
@@ -134,11 +142,18 @@ Foam::solverPerformance Foam::PBiCGStab::scalarSolve
         Info<< "   Normalisation factor = " << normFactor << endl;
     }
 
+    #ifdef USE_ROCTX
+    roctxRangePushA("PBiCGStab_initialResidual");
+    #endif
     // --- Calculate normalised residual norm
     solverPerf.initialResidual() =
         gSumMag(rA, matrix().mesh().comm())
        /normFactor;
     solverPerf.finalResidual() = solverPerf.initialResidual();
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     // --- Check convergence, solve if not converged
     if
@@ -167,6 +182,10 @@ Foam::solverPerformance Foam::PBiCGStab::scalarSolve
         solveScalar alpha = 0;
         solveScalar omega = 0;
 
+	#ifdef USE_ROCTX
+        roctxRangePushA("PBiCGStab_BB");
+        #endif
+
         // --- Select and construct the preconditioner
         autoPtr<lduMatrix::preconditioner> preconPtr =
         lduMatrix::preconditioner::New
@@ -174,6 +193,10 @@ Foam::solverPerformance Foam::PBiCGStab::scalarSolve
             *this,
             controlDict_
         );
+
+        #ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
 
         // --- Solver iteration
         do
@@ -192,7 +215,7 @@ Foam::solverPerformance Foam::PBiCGStab::scalarSolve
             // --- Update pA
             if (solverPerf.nIterations() == 0)
             {
-                #pragma omp target teams distribute parallel for if(target:nCells>20000)    
+                #pragma omp target teams distribute parallel for if(nCells>10000)    
                 for (label cell=0; cell<nCells; cell++)
                 {
                     pAPtr[cell] = rAPtr[cell];
@@ -207,7 +230,7 @@ Foam::solverPerformance Foam::PBiCGStab::scalarSolve
                 }
 
                 const solveScalar beta = (rA0rA/rA0rAold)*(alpha/omega);
-                #pragma omp target teams distribute parallel for if(target:nCells>20000)
+                #pragma omp target teams distribute parallel for if(nCells>10000)
                 for (label cell=0; cell<nCells; cell++)
                 {
                     pAPtr[cell] =
@@ -227,7 +250,7 @@ Foam::solverPerformance Foam::PBiCGStab::scalarSolve
             alpha = rA0rA/rA0AyA;
 
             // --- Calculate sA
-	    #pragma omp target teams distribute parallel for if(target:nCells>20000)
+	    #pragma omp target teams distribute parallel for if(nCells>10000)
             for (label cell=0; cell<nCells; cell++)
             {
                 sAPtr[cell] = rAPtr[cell] - alpha*AyAPtr[cell];
@@ -243,7 +266,7 @@ Foam::solverPerformance Foam::PBiCGStab::scalarSolve
              && solverPerf.checkConvergence(tolerance_, relTol_, log_)
             )
             {
-		#pragma omp target teams distribute parallel for if(target:nCells>20000)    
+		#pragma omp target teams distribute parallel for if(nCells>10000)    
                 for (label cell=0; cell<nCells; cell++)
                 {
                     psiPtr[cell] += alpha*yAPtr[cell];
@@ -264,14 +287,30 @@ Foam::solverPerformance Foam::PBiCGStab::scalarSolve
             // --- Calculate tA
             matrix_.Amul(tA, zA, interfaceBouCoeffs_, interfaces_, cmpt);
 
+	    #ifdef USE_ROCTX
+	    roctxRangePushA("PBiCGStab:gSumSqr");
+            #endif
+
             const solveScalar tAtA = gSumSqr(tA, matrix().mesh().comm());
+
+	    #ifdef USE_ROCTX
+            roctxRangePop();
+            #endif
+
+            #ifdef USE_ROCTX
+            roctxRangePushA("PBiCGStab:gSumProd");
+            #endif
 
             // --- Calculate omega from tA and sA
             //     (cheaper than using zA with preconditioned tA)
             omega = gSumProd(tA, sA, matrix().mesh().comm())/tAtA;
 
+            #ifdef USE_ROCTX
+            roctxRangePop();
+            #endif
+
             // --- Update solution and residual
-	    #pragma omp target teams distribute parallel for if(target:nCells>20000)
+	    #pragma omp target teams distribute parallel for if(nCells>10000)
             for (label cell=0; cell<nCells; cell++)
             {
                 psiPtr[cell] += alpha*yAPtr[cell] + omega*zAPtr[cell];

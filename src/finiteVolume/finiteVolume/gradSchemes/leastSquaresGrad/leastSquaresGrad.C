@@ -35,6 +35,20 @@ License
 #include "GeometricField.H"
 #include "extrapolatedCalculatedFvPatchField.H"
 
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+
+#ifdef USE_OMP
+  #include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
+
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 template<class Type>
@@ -53,6 +67,11 @@ Foam::fv::leastSquaresGrad<Type>::calcGrad
     const word& name
 ) const
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePush("leastSquaresGrad::calcGrad");
+    #endif
+
     typedef typename outerProduct<vector, Type>::type GradType;
     typedef GeometricField<GradType, fvPatchField, volMesh> GradFieldType;
 
@@ -86,15 +105,18 @@ Foam::fv::leastSquaresGrad<Type>::calcGrad
     const labelUList& own = mesh.owner();
     const labelUList& nei = mesh.neighbour();
 
-    forAll(own, facei)
+    
+    //forAll(own, facei)
+    label loop_len = own.size();
+    #pragma omp target teams distribute parallel for if(loop_len > 10000)
+    for (label facei = 0; facei < loop_len; ++facei)
     {
         const label ownFacei = own[facei];
         const label neiFacei = nei[facei];
 
         const Type deltaVsf(vsf[neiFacei] - vsf[ownFacei]);
-
-        lsGrad[ownFacei] += ownLs[facei]*deltaVsf;
-        lsGrad[neiFacei] -= neiLs[facei]*deltaVsf;
+        atomicAccumulator(lsGrad[ownFacei]) += ownLs[facei]*deltaVsf;
+        atomicAccumulator(lsGrad[neiFacei]) -= neiLs[facei]*deltaVsf;
     }
 
     // Boundary faces
@@ -112,9 +134,12 @@ Foam::fv::leastSquaresGrad<Type>::calcGrad
                 vsf.boundaryField()[patchi].patchNeighbourField()
             );
 
-            forAll(neiVsf, patchFacei)
+            //forAll(neiVsf, patchFacei)
+	    const label loop_len = neiVsf.size();
+            #pragma omp target teams distribute parallel for if(loop_len > 10000)
+            for (label patchFacei = 0; patchFacei < loop_len; ++patchFacei)	    
             {
-                lsGrad[faceCells[patchFacei]] +=
+                 atomicAccumulator(lsGrad[faceCells[patchFacei]]) +=
                     patchOwnLs[patchFacei]
                    *(neiVsf[patchFacei] - vsf[faceCells[patchFacei]]);
             }
@@ -123,9 +148,12 @@ Foam::fv::leastSquaresGrad<Type>::calcGrad
         {
             const fvPatchField<Type>& patchVsf = vsf.boundaryField()[patchi];
 
-            forAll(patchVsf, patchFacei)
+            //forAll(patchVsf, patchFacei)
+            const label loop_len = patchVsf.size();
+            #pragma omp target teams distribute parallel for if(loop_len > 10000)
+            for (label patchFacei = 0; patchFacei < loop_len; ++patchFacei)
             {
-                lsGrad[faceCells[patchFacei]] +=
+                 atomicAccumulator(lsGrad[faceCells[patchFacei]]) +=
                      patchOwnLs[patchFacei]
                     *(patchVsf[patchFacei] - vsf[faceCells[patchFacei]]);
             }
@@ -135,6 +163,10 @@ Foam::fv::leastSquaresGrad<Type>::calcGrad
 
     lsGrad.correctBoundaryConditions();
     gaussGrad<Type>::correctBoundaryConditions(vsf, lsGrad);
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     return tlsGrad;
 }

@@ -30,6 +30,15 @@ License
 #include "PstreamBuffers.H"
 #include "flipOp.H"
 
+
+#ifdef USE_OMP
+  #include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
 // * * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * //
 
 template<class T, class CombineOp, class NegateOp>
@@ -45,6 +54,8 @@ void Foam::mapDistributeBase::flipAndCombine
 {
     if (hasFlip)
     {
+        if (map.size()>=2000) fprintf(stderr,"typeid(T).name()=%s  line=%d  file=%s",typeid(T).name(), __LINE__, __FILE__ );
+    
         forAll(map, i)
         {
             if (map[i] > 0)
@@ -69,10 +80,22 @@ void Foam::mapDistributeBase::flipAndCombine
     }
     else
     {
-        forAll(map, i)
-        {
-            cop(lhs[map[i]], rhs[i]);
-        }
+	if constexpr ( std::is_same_v<T,Foam::Vector<scalar>> || std::is_same_v<T,scalar> || std::is_same_v<T,label>
+		    || std::is_same_v<T,Foam::Tensor<scalar>> ){
+	  const label loop_len = map.size();
+          #pragma omp target teams distribute parallel for if(loop_len>2000) thread_limit(128)
+          for (label i = 0; i < loop_len; ++i)
+          {  
+	    cop(lhs[map[i]], rhs[i]);
+	  }
+	}
+	else{
+	  if (map.size()>=2000) fprintf(stderr,"typeid(T).name()=%s  line=%d  file=%s\n",typeid(T).name(), __LINE__, __FILE__ );	
+          forAll(map, i)
+          {
+              cop(lhs[map[i]], rhs[i]);
+          }
+	}
     }
 }
 
@@ -125,6 +148,7 @@ Foam::List<T> Foam::mapDistributeBase::accessAndFlip
 
     if (hasFlip)
     {
+	if (len>=2000) fprintf(stderr,"typeid(T).name()=%s  line=%d  file=%s",typeid(T).name(), __LINE__, __FILE__ );    
         for (label i = 0; i < len; ++i)
         {
             const label index = indices[i];
@@ -150,10 +174,21 @@ Foam::List<T> Foam::mapDistributeBase::accessAndFlip
     else
     {
         // Like indirect list
-        for (label i = 0; i < len; ++i)
-        {
-            output[i] = values[indices[i]];
-        }
+	if constexpr ( std::is_same_v<T,Foam::Vector<scalar>> || std::is_same_v<T,scalar> || std::is_same_v<T,label> 
+		    || std::is_same_v<T,Foam::Tensor<scalar>>  ){
+          #pragma omp target teams distribute parallel for if(len>2000)  thread_limit(128)
+          for (label i = 0; i < len; ++i)
+          {
+              output[i] = values[indices[i]];
+          }
+	}
+	else{
+	  if (len>=2000) fprintf(stderr,"typeid(T).name()=%s  line=%d  file=%s\n",typeid(T).name(), __LINE__, __FILE__ );	
+          for (label i = 0; i < len; ++i)
+          {
+              output[i] = values[indices[i]];
+          }
+	}
     }
 
     return output;

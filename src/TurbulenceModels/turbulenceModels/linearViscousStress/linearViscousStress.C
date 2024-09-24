@@ -82,6 +82,7 @@ Foam::linearViscousStress<BasicTurbulenceModel>::devRhoReff
     const volVectorField& U
 ) const
 {
+    //fprintf(stderr,"file=%s line = %d\n",__FILE__, __LINE__);	
     return tmp<volSymmTensorField>
     (
         new volSymmTensorField
@@ -108,6 +109,7 @@ Foam::linearViscousStress<BasicTurbulenceModel>::divDevRhoReff
     volVectorField& U
 ) const
 {
+    //fprintf(stderr,"file=%s line = %d\n",__FILE__, __LINE__); 	
     return
     (
       - fvc::div((this->alpha_*this->rho_*this->nuEff())*dev2(T(fvc::grad(U))))
@@ -124,6 +126,7 @@ Foam::linearViscousStress<BasicTurbulenceModel>::divDevRhoReff
     volVectorField& U
 ) const
 {
+    //fprintf(stderr,"file=%s line = %d\n",__FILE__, __LINE__);	
     return
     (
       - fvc::div((this->alpha_*rho*this->nuEff())*dev2(T(fvc::grad(U))))
@@ -135,6 +138,7 @@ Foam::linearViscousStress<BasicTurbulenceModel>::divDevRhoReff
 template<class BasicTurbulenceModel>
 void Foam::linearViscousStress<BasicTurbulenceModel>::correct()
 {
+    //fprintf(stderr,"file=%s line = %d\n",__FILE__, __LINE__);
     BasicTurbulenceModel::correct();
 }
 

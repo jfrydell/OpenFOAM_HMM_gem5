@@ -115,6 +115,8 @@ void Foam::lduCalculatedProcessorField<Type>::initInterfaceMatrixUpdate
 ) const
 {
 
+    fprintf(stderr,"initInterfaceMatrixUpdate : file=%s, line=%d \n",__FILE__,__LINE__);
+
 
     // Bypass patchInternalField since uses fvPatch addressing
     const labelList& fc = lduAddr.patchAddr(patchId);
@@ -183,9 +185,7 @@ void Foam::lduCalculatedProcessorField<Type>::addToInternalField
         //forAll(faceCells, elemI)
         label loop_len = faceCells.size();
 	
-	fprintf(stderr,"addToInternalField: loop_len = %d \n",(int) loop_len);
-
-        #pragma omp target teams distribute parallel for if(target:loop_len > 10000)
+        #pragma omp target teams distribute parallel for if(loop_len > 10000)
 	for (label elemI = 0; elemI < loop_len; ++elemI)
         {
             result[faceCells[elemI]] += coeffs[elemI]*vals[elemI];
@@ -196,10 +196,7 @@ void Foam::lduCalculatedProcessorField<Type>::addToInternalField
         //forAll(faceCells, elemI)
         label loop_len = faceCells.size();
 	
-	fprintf(stderr,"addToInternalField: loop_len = %d \n",(int) loop_len);
-
-
-        #pragma omp target teams distribute parallel for if(target:loop_len > 10000)
+        #pragma omp target teams distribute parallel for if(loop_len > 10000)
         for (label elemI = 0; elemI < loop_len; ++elemI)
         {
             result[faceCells[elemI]] -= coeffs[elemI]*vals[elemI];

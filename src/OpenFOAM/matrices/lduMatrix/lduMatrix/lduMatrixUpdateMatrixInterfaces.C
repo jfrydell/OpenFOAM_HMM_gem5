@@ -192,13 +192,30 @@ void Foam::lduMatrix::updateMatrixInterfaces
         {
             if (allUpdated)
             {
+	        #ifdef USE_ROCTX
+                roctxRangePush("lduMatrix::updateMatrixInterfaces_call_resetRequests");
+                #endif
+
                 // All received. Just remove all outstanding requests
                 UPstream::resetRequests(startRequest);
+
+		#ifdef USE_ROCTX
+                roctxRangePop();
+                #endif
+
             }
             else
             {
+		#ifdef USE_ROCTX
+                roctxRangePush("lduMatrix::updateMatrixInterfaces_call_waitRequests");
+                #endif
+
                 // Block for all requests and remove storage
                 UPstream::waitRequests(startRequest);
+
+	        #ifdef USE_ROCTX
+                roctxRangePop();
+                #endif
             }
         }
 

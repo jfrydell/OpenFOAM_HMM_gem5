@@ -182,6 +182,8 @@ template<class BasicTurbulenceModel>
 void kOmega<BasicTurbulenceModel>::correct()
 {
 
+    printf("I AM IN kOmega<BasicTurbulenceModel>::correct \n");
+
     if (!this->turbulence_)
     {
         return;

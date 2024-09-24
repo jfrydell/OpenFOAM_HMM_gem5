@@ -71,7 +71,7 @@ void Foam::GAMGSolver::scale
     solveScalar scalingFactorNum = 0.0, scalingFactorDenom = 0.0;
    
 
-    #pragma omp target teams distribute parallel for reduction(+:scalingFactorNum, scalingFactorDenom) map(tofrom:scalingFactorNum,scalingFactorDenom) if(target:nCells>20000)
+    #pragma omp target teams distribute parallel for reduction(+:scalingFactorNum, scalingFactorDenom) map(tofrom:scalingFactorNum,scalingFactorDenom) if(nCells>10000)
     for (label i=0; i<nCells; i++)
     {
         scalingFactorNum += fieldPtr[i]*sourcePtr[i];
@@ -97,7 +97,7 @@ void Foam::GAMGSolver::scale
     const scalarField& D = A.diag();
     const scalar* const __restrict__ DPtr = D.begin();
 
-      #pragma omp target teams distribute parallel for if(target:nCells>20000)
+      #pragma omp target teams distribute parallel for if(nCells>10000)
       for (label i=0; i<nCells; i++)
       {
         fieldPtr[i] = sf*fieldPtr[i] + (sourcePtr[i] - sf*AcfPtr[i])/DPtr[i];

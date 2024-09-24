@@ -30,6 +30,12 @@ License
 #include "diagonalSolver.H"
 #include "PrecisionAdaptor.H"
 
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 namespace Foam
@@ -202,10 +208,18 @@ Foam::solveScalarField::cmptType Foam::lduMatrix::solver::normFactor
     solveScalarField& tmpField
 ) const
 {
+    #ifdef USE_ROCTX
+    roctxRangePush("lduMatrix::solver::normFactor_1");
+    #endif
+
     // --- Calculate A dot reference value of psi
     matrix_.sumA(tmpField, interfaceBouCoeffs_, interfaces_);
 
     tmpField *= gAverage(psi, matrix_.mesh().comm());
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     return
         gSum

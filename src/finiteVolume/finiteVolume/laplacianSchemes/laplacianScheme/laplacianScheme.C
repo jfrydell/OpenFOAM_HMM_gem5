@@ -31,6 +31,10 @@ License
 #include "linear.H"
 #include "fvMatrix.H"
 
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 namespace Foam
@@ -93,6 +97,8 @@ laplacianScheme<Type, GType>::fvmLaplacian
     const GeometricField<Type, fvPatchField, volMesh>& vf
 )
 {
+    //fprintf(stderr,"file = %s, line = %d\n",__FILE__, __LINE__);
+
     return fvmLaplacian(tinterpGammaScheme_().interpolate(gamma)(), vf);
 }
 

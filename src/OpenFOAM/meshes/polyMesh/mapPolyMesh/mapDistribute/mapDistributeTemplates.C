@@ -31,28 +31,64 @@ License
 #include "transformField.H"
 #include "flipOp.H"
 
+
+
+#ifdef USE_OMP
+  #include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+
 // * * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * //
 
 template<class T>
 void Foam::mapDistribute::applyDummyTransforms(List<T>& field) const
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePush("mapDistribute::applyDummyTransforms");
+    #endif
+
     forAll(transformElements_, trafoI)
     {
         const labelList& elems = transformElements_[trafoI];
 
         label n = transformStart_[trafoI];
 
-        forAll(elems, i)
+        //forAll(elems, i)
+	const label loop_len = elems.size();
+        //#pragma omp target teams distribute parallel for if (loop_len > 3000) 
+	//for (label i = 0; i < loop_len; ++i)
+	forAll(elems, i)
         {
             field[n++] = field[elems[i]];
+	    //field[n+i] = field[elems[i]];
         }
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
 }
 
 
 template<class T>
 void Foam::mapDistribute::applyDummyInverseTransforms(List<T>& field) const
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePush("mapDistribute::applyDummyInverseTransforms");
+    #endif
+
     forAll(transformElements_, trafoI)
     {
         const labelList& elems = transformElements_[trafoI];
@@ -63,6 +99,10 @@ void Foam::mapDistribute::applyDummyInverseTransforms(List<T>& field) const
             field[elems[i]] = field[n++];
         }
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 
@@ -74,6 +114,9 @@ void Foam::mapDistribute::applyTransforms
     const TransformOp& top
 ) const
 {
+    
+    fprintf(stderr,"in file %s line %d\n",__FILE__, __LINE__);
+
     const List<vectorTensorTransform>& totalTransform =
         globalTransforms.transformPermutations();
 
@@ -104,6 +147,8 @@ void Foam::mapDistribute::applyInverseTransforms
     const TransformOp& top
 ) const
 {
+    fprintf(stderr,"in file %s line %d\n",__FILE__, __LINE__);
+
     const List<vectorTensorTransform>& totalTransform =
         globalTransforms.transformPermutations();
 

@@ -86,6 +86,10 @@ Foam::linearUpwindV<Type>::correction
     const volVectorField& C = mesh.C();
     const surfaceVectorField& Cf = mesh.Cf();
 
+    #ifdef USE_ROCTX
+    roctxRangePush("GeometricField:correction_make_tgradVf");
+    #endif
+
     tmp
     <
         GeometricField
@@ -96,6 +100,14 @@ Foam::linearUpwindV<Type>::correction
         >
     > tgradVf = gradScheme_().grad(vf, gradSchemeName_);
 
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
+    #ifdef USE_ROCTX
+    roctxRangePush("GeometricField:correction_call_tgradVf");
+    #endif
+
     const GeometricField
     <
         typename outerProduct<vector, Type>::type,
@@ -104,13 +116,18 @@ Foam::linearUpwindV<Type>::correction
     >& gradVf = tgradVf();
 
     #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
+
+    #ifdef USE_ROCTX
     roctxRangePush("GeometricField:correction_loop1");
     #endif
 
     label loop_len = faceFlux.size();
 
     //forAll(faceFlux, facei)
-    #pragma omp target teams distribute parallel for if(target:loop_len > 10000)
+    #pragma omp target teams distribute parallel for if(loop_len > 10000)
     for (label facei = 0; facei < loop_len; ++facei) 
     {
         vector maxCorr;

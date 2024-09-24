@@ -177,7 +177,7 @@ Foam::surfaceInterpolationScheme<Type>::interpolate
 
     Field<Type>& sfi = sf.primitiveFieldRef();
 
-    #pragma omp target teams distribute parallel for if(target:P.size()>20000)
+    #pragma omp target teams distribute parallel for if(P.size()>20000)
     for (label fi=0; fi<P.size(); fi++)
     {
         sfi[fi] = lambda[fi]*vfi[P[fi]] + y[fi]*vfi[N[fi]];
@@ -192,7 +192,7 @@ Foam::surfaceInterpolationScheme<Type>::interpolate
     forAll(lambdas.boundaryField(), pi)
 #else
     label loop_len = lambdas.boundaryField().size();	    
-    //#pragma omp target teams distribute parallel for if(target:loop_len>20000)
+    //#pragma omp target teams distribute parallel for if(loop_len>20000)
     for (label pi=0; pi<loop_len; pi++)	    
 #endif
     {
@@ -287,11 +287,18 @@ Foam::surfaceInterpolationScheme<Type>::dotInterpolate
 
     const typename SFType::Internal& Sfi = Sf();
     label loop_len = P.size();
-    #pragma omp target teams distribute parallel for if(target:loop_len > 20000)
+    #pragma omp target teams distribute parallel for  if(loop_len > 20000)
     for (label fi=0; fi<loop_len; fi++)
-    {
-        sfi[fi] = Sfi[fi] & (lambda[fi]*(vfi[P[fi]] - vfi[N[fi]]) + vfi[N[fi]]);
+    {  
+        #if 1    
+	auto N_fi = N[fi];
+        auto vfi_val_N = vfi[N_fi];	
+        sfi[fi] = Sfi[fi] & (lambda[fi]*(vfi[P[fi]] - vfi_val_N) + vfi_val_N);
+        #else
+	sfi[fi] = Sfi[fi] & (lambda[fi]*(vfi[P[fi]] - vfi[N[fi]]) + vfi[N[fi]]);
+        #endif
     }
+
 
     // Interpolate across coupled patches using given lambdas
 
@@ -307,7 +314,7 @@ Foam::surfaceInterpolationScheme<Type>::dotInterpolate
     #else
     loop_len = lambdas.boundaryField().size();
     //LG2 need to wrap  a definition   of [lambdas.boundaryField()[pi]*vf.boundaryField()[pi].patchInternalField() ] in declare target
-    //#pragma omp target teams distribute parallel for if(target:loop_len > 20000)
+    //#pragma omp target teams distribute parallel for if(loop_len > 20000)
     for (label pi=0; pi<loop_len; pi++)
     #endif
     {

@@ -45,6 +45,14 @@ License
 #include "macros.H"
 
 
+#ifdef USE_OMP
+#include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
 #ifdef USE_ROCTX
 #include <roctracer/roctx.h>
 #endif
@@ -71,7 +79,7 @@ void Foam::fvMatrix<Type>::addToInternalField
     //forAll(addr, facei)
     label loop_len = addr.size();
 
-    #pragma omp target teams distribute parallel for if(target:loop_len > 5000)
+    #pragma omp target teams distribute parallel for if(loop_len > 5000)
     for (label facei=0; facei < loop_len; ++facei)
     {
         atomicAccumulator(intf[addr[facei]]) += pf[facei];
@@ -102,6 +110,8 @@ void Foam::fvMatrix<Type>::subtractFromInternalField
     Field<Type2>& intf
 ) const
 {
+
+    fprintf(stderr,"fvMatrix<Type>::subtractFromInternalField line=%d\n ",__LINE__);	
     if (addr.size() != pf.size())
     {
         FatalErrorInFunction
@@ -138,6 +148,11 @@ void Foam::fvMatrix<Type>::addBoundaryDiag
     const direction solveCmpt
 ) const
 {
+    
+    #ifdef USE_ROCTX
+    roctxRangePush("fvMatrix::addBoundaryDiag");
+    #endif
+
     for (label fieldi = 0; fieldi < nMatrices(); ++fieldi)
     {
         const auto& bpsi = this->psi(fieldi).boundaryField();
@@ -157,12 +172,19 @@ void Foam::fvMatrix<Type>::addBoundaryDiag
             }
         }
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 
 template<class Type>
 void Foam::fvMatrix<Type>::addCmptAvBoundaryDiag(scalarField& diag) const
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePush("fvMatrix::addCmptAvBoundaryDiag");
+    #endif
     for (label fieldi = 0; fieldi < nMatrices(); fieldi++)
     {
         const auto& bpsi = this->psi(fieldi).boundaryField();
@@ -181,6 +203,9 @@ void Foam::fvMatrix<Type>::addCmptAvBoundaryDiag(scalarField& diag) const
             }
         }
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 
@@ -191,6 +216,10 @@ void Foam::fvMatrix<Type>::addBoundarySource
     const bool couples
 ) const
 {
+    #ifdef USE_ROCTX
+    roctxRangePush("fvMatrix::addBoundarySource");
+    #endif
+
     for (label fieldi = 0; fieldi < nMatrices(); fieldi++)
     {
         const auto& bpsi = this->psi(fieldi).boundaryField();
@@ -221,15 +250,21 @@ void Foam::fvMatrix<Type>::addBoundarySource
 
                     const labelUList& addr = lduAddr().patchAddr(patchi);
 
-                    forAll(addr, facei)
+                    const  label loop_len = addr.size();
+                    //forAll(addr, facei)
+                    #pragma omp target teams distribute parallel for if (loop_len > 10000)
+		    for (label facei = 0; facei < loop_len; ++facei)
                     {
-                        source[addr[facei]] +=
+                        atomicAccumulator(source[addr[facei]]) +=
                             cmptMultiply(pbc[facei], pnf[facei]);
                     }
                 }
             }
         }
     }
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 
@@ -867,6 +902,9 @@ void Foam::fvMatrix<Type>::transferFvMatrixCoeffs()
         const scalarField diagSub(matrix(i).diag());
         const Field<Type> sourceSub(matrix(i).source());
 
+
+	fprintf(stderr,"fvMatrix<Type>:: line=%d\n ",__LINE__);
+
         forAll(upperSub, facei)
         {
             upperAssemb[faceMap[i][facei]] = upperSub[facei];
@@ -1155,7 +1193,7 @@ void Foam::fvMatrix<Type>::relax(const scalar alpha)
                 // off-diagonal contributions
                 //forAll(pa, face)
                 label loop_len = pa.size();
-                #pragma omp target teams distribute parallel for if(target:loop_len>10000)
+                #pragma omp target teams distribute parallel for if(loop_len>10000)
 		for (label face=0; face < loop_len; ++face)
                 {
 		    #pragma omp atomic	
@@ -1170,7 +1208,7 @@ void Foam::fvMatrix<Type>::relax(const scalar alpha)
                 // contribution to ensure stability
                 //forAll(pa, face)
 	        label loop_len = pa.size();
-		#pragma omp target teams distribute parallel for if(target:loop_len>10000)
+		#pragma omp target teams distribute parallel for if(loop_len>10000)
 		for (label face=0; face < loop_len; ++face)
                 {
 		    #pragma omp atomic
@@ -1237,7 +1275,7 @@ void Foam::fvMatrix<Type>::relax(const scalar alpha)
     // Assumes that the central coefficient is positive and ensures it is
     //forAll(D, celli)
     label loop_len = D.size();
-    #pragma omp target teams distribute parallel for if(target:loop_len > 10000) 
+    #pragma omp target teams distribute parallel for if(loop_len > 10000) 
     for (label celli = 0; celli < loop_len; ++celli)
     {
         D[celli] = max(mag(D[celli]), sumOff[celli]);
@@ -1264,7 +1302,7 @@ void Foam::fvMatrix<Type>::relax(const scalar alpha)
             {
                 //forAll(pa, face)
 	        label loop_len = pa.size();
-                #pragma omp target teams distribute parallel for if(target:loop_len>10000)
+                #pragma omp target teams distribute parallel for if(loop_len>10000)
                 for (label face=0; face < loop_len; ++face)
                 {
 		    #pragma omp atomic	
@@ -1275,7 +1313,7 @@ void Foam::fvMatrix<Type>::relax(const scalar alpha)
             {
                 //forAll(pa, face)
                 label loop_len = pa.size();
-                #pragma omp target teams distribute parallel for if(target:loop_len>10000)
+                #pragma omp target teams distribute parallel for if(loop_len>10000)
                 for (label face=0; face < loop_len; ++face)
                 {
 		    #pragma omp atomic
@@ -1325,7 +1363,9 @@ void Foam::fvMatrix<Type>::boundaryManipulate
     roctxRangePush("fvMatrix::boundaryManipulate");
     #endif
 
-    forAll(bFields, patchi)
+    //forAll(bFields, patchi)
+    const label loop_len = bFields.size();
+    for (label patchi = 0; patchi < loop_len; ++patchi)
     {
         bFields[patchi].manipulateMatrix(*this);
     }
@@ -1434,14 +1474,59 @@ Foam::fvMatrix<Type>::H() const
     // Loop over field components
     for (direction cmpt=0; cmpt<Type::nComponents; cmpt++)
     {
+
+	#ifdef USE_ROCTX
+        roctxRangePush("Foam::fvMatrix:loop_cmpt_1_1");
+        #endif
+
         scalarField psiCmpt(psi_.primitiveField().component(cmpt));
 
+        #ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
+
+        #ifdef USE_ROCTX
+        roctxRangePush("Foam::fvMatrix:loop_cmpt_1_2");
+        #endif
+
         scalarField boundaryDiagCmpt(psi_.size(), Zero);
+
+        #ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
+
+        #ifdef USE_ROCTX
+        roctxRangePush("Foam::fvMatrix:loop_cmpt_1_3");
+        #endif
+
         addBoundaryDiag(boundaryDiagCmpt, cmpt);
+
+	#ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
+
         boundaryDiagCmpt.negate();
-        addCmptAvBoundaryDiag(boundaryDiagCmpt);
+
+        #ifdef USE_ROCTX
+        roctxRangePush("Foam::fvMatrix:loop_cmpt_1_5");
+        #endif
+       
+       	addCmptAvBoundaryDiag(boundaryDiagCmpt);
+
+        #ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
+
+	#ifdef USE_ROCTX
+        roctxRangePush("Foam::fvMatrix:loop_cmpt_1_6");
+        #endif
 
         Hphi.primitiveFieldRef().replace(cmpt, boundaryDiagCmpt*psiCmpt);
+
+        #ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
+
     }
     #ifdef USE_ROCTX
     roctxRangePop();

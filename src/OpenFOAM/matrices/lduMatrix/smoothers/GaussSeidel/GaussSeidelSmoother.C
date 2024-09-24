@@ -30,6 +30,18 @@ License
 #include "PrecisionAdaptor.H"
 
 
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+#ifdef USE_OMP
+#include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 namespace Foam
@@ -96,6 +108,9 @@ void Foam::GaussSeidelSmoother::smooth
     const label* const __restrict__ uPtr =
         matrix_.lduAddr().upperAddr().begin();
 
+    const label* const __restrict__ lPtr =
+        matrix_.lduAddr().lowerAddr().begin();
+
     const label* const __restrict__ ownStartPtr =
         matrix_.lduAddr().ownerStartAddr().begin();
 
@@ -143,8 +158,104 @@ void Foam::GaussSeidelSmoother::smooth
         label fStart;
         label fEnd = ownStartPtr[0];
 
-       
-        
+#if 1
+        //temporary field
+        solveScalarField Z(psi.size()); //temporary array 
+        solveScalarField R(psi.size()); //residual
+
+        solveScalar* __restrict__ rhs_ptr = bPrime.begin();
+	solveScalar* __restrict__ r_ptr = R.begin();
+        solveScalar* __restrict__ u_ptr = psi.begin();
+        solveScalar* __restrict__ z_ptr = Z.begin();
+
+	const label nFaces = matrix_.upper().size();
+
+	const label USE_ZERO_ORDER = 0;
+
+	//use relax_weight = 1.0;
+        // 0) r = relax_weight * (RHS - A * u)
+	
+        #pragma omp target teams distribute parallel for if(nCells > 10000)
+        for (label celli=0; celli<nCells; ++celli)
+        {
+          r_ptr[celli] = diagPtr[celli]*u_ptr[celli];
+        }
+
+
+        #pragma omp target teams distribute parallel for if(nFaces > 10000) thread_limit(256)
+        for (label face=0; face<nFaces; face+=2)
+        {
+            const label nf = (nFaces-face) > 1 ? 2 : 1;
+            #pragma unroll 2
+            for ( label i = 0; i < nf; ++i){
+              const label l_val = lPtr[face+i];
+              const label u_val = uPtr[face+i];
+              #pragma omp atomic
+              r_ptr[u_val] += lowerPtr[face+i]*u_ptr[l_val];
+              #pragma omp atomic
+              r_ptr[l_val] += upperPtr[face+i]*u_ptr[u_val];
+            }
+        }
+
+
+
+	if (1 == USE_ZERO_ORDER){
+
+	   scalar relax_weight = 0.8;
+
+            // 1) z = r/D, u = u + relax_weight * z
+           #pragma omp target teams distribute parallel for if(nCells > 10000)
+           for (label celli=0; celli<nCells; celli++)
+           {
+             scalar r = rhs_ptr[celli] - r_ptr[celli];
+             u_ptr[celli] += relax_weight * r / diagPtr[celli];
+           }
+	}
+        else{
+
+        // 1) z = r/D, u = u + z
+	#pragma omp target teams distribute parallel for if(nCells > 10000)
+        for (label celli=0; celli<nCells; celli++)
+	{
+          scalar r = rhs_ptr[celli] - r_ptr[celli];
+          z_ptr[celli] = r / diagPtr[celli];
+	  u_ptr[celli] += z_ptr[celli]; 
+	}
+
+        scalar multiplier = -1.0;
+
+	for (label sweepID = 0; sweepID < 1; sweepID++)
+        {
+            // 2) r = U * z
+
+	    #pragma omp target teams distribute parallel for if(nCells > 10000)
+            for (label celli=0; celli<nCells; celli++)
+	    {
+              fStart = ownStartPtr[celli];
+              fEnd   = ownStartPtr[celli + 1];
+
+	      scalar tmp = 0.0;
+              #pragma unroll 4
+              for (label facei=fStart; facei<fEnd; facei++)
+              {
+                  tmp +=  upperPtr[facei]*z_ptr[uPtr[facei]];
+              }
+              r_ptr[celli] = tmp;
+	    }
+
+	    // 3) z = r/D, u = u + m * z
+	    #pragma omp target teams distribute parallel for if(nCells > 10000)
+	    for (label celli=0; celli<nCells; celli++)
+            {
+              z_ptr[celli] = r_ptr[celli] / diagPtr[celli];
+	      u_ptr[celli] += multiplier * z_ptr[celli];
+	    }
+	    multiplier *= -1.0;
+   	}
+	}
+
+#else
+
         for (label celli=0; celli<nCells; celli++)
         {
             // Start and end of this row
@@ -171,6 +282,8 @@ void Foam::GaussSeidelSmoother::smooth
 
             psiPtr[celli] = psii;
         }
+#endif
+
     }
 }
 

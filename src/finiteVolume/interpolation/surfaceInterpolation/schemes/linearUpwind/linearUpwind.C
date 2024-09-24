@@ -28,6 +28,12 @@ License
 #include "linearUpwind.H"
 #include "fvMesh.H"
 
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 template<class Type>
@@ -37,6 +43,12 @@ Foam::linearUpwind<Type>::correction
     const GeometricField<Type, fvPatchField, volMesh>& vf
 ) const
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePushA("linearUpwind::correction");
+    #endif
+
+
     const fvMesh& mesh = this->mesh();
 
     tmp<GeometricField<Type, fvsPatchField, surfaceMesh>> tsfCorr
@@ -76,6 +88,9 @@ Foam::linearUpwind<Type>::correction
         )
     );
 
+
+
+
     for (direction cmpt = 0; cmpt < pTraits<Type>::nComponents; cmpt++)
     {
         tmp<volVectorField> tgradVf =
@@ -83,7 +98,15 @@ Foam::linearUpwind<Type>::correction
 
         const volVectorField& gradVf = tgradVf();
 
-        forAll(faceFlux, facei)
+	#ifdef USE_ROCTX
+        roctxRangePushA("linearUpwind::correction_2");
+        #endif
+
+        const label loop_len = faceFlux.size();
+        //forAll(faceFlux, facei)
+
+        #pragma omp target teams distribute parallel for if(loop_len > 10000)
+	for (label facei = 0; facei < loop_len; ++facei)
         {
             const label celli =
                 (faceFlux[facei] > 0) ? owner[facei] : neighbour[facei];
@@ -116,7 +139,10 @@ Foam::linearUpwind<Type>::correction
                     Cf.boundaryField()[patchi].patch().delta()
                 );
 
-                forAll(pOwner, facei)
+                //forAll(pOwner, facei)
+                const label loop_len = pOwner.size();
+		#pragma omp target teams distribute parallel for if(loop_len > 10000)
+                for (label facei = 0; facei < loop_len; ++facei)	
                 {
                     label own = pOwner[facei];
 
@@ -135,7 +161,15 @@ Foam::linearUpwind<Type>::correction
                 }
             }
         }
+        #ifdef USE_ROCTX
+        roctxRangePop();
+        #endif
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
 
     return tsfCorr;
 }
@@ -148,6 +182,11 @@ Foam::linearUpwind<Foam::vector>::correction
     const volVectorField& vf
 ) const
 {
+
+
+    #ifdef USE_ROCTX
+    roctxRangePushA("linearUpwind<vector>::correction");
+    #endif
     const fvMesh& mesh = this->mesh();
 
     tmp<surfaceVectorField> tsfCorr
@@ -234,6 +273,10 @@ Foam::linearUpwind<Foam::vector>::correction
             }
         }
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 
     return tsfCorr;
 }

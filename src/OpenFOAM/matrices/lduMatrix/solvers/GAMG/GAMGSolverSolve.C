@@ -85,7 +85,6 @@ Foam::solverPerformance Foam::GAMGSolver::solve
 
     #ifdef USE_ROCTX
     roctxRangePush("matrix_.Amul");
-    
     #endif
     matrix_.Amul(Apsi, psi, interfaceBouCoeffs_, interfaces_, cmpt);
     #ifdef USE_ROCTX
@@ -585,7 +584,7 @@ void Foam::GAMGSolver::Vcycle
         #endif
     }
 
-      #pragma omp target teams distribute parallel for if(target:psi.size()>10000)
+      #pragma omp target teams distribute parallel for if(psi.size()>10000)
       for (label i = 0; i < psi.size(); ++i)
       //forAll(psi, i)
       {

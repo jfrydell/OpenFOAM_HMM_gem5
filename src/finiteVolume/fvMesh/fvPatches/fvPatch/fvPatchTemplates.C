@@ -28,6 +28,19 @@ License
 
 #include "fvPatch.H"
 
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+#ifdef USE_OMP
+  #include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
+
 // * * * * * * * * * * * * * * * Member Functions  * * * * * * * * * * * * * //
 
 template<class Type>
@@ -47,13 +60,25 @@ Foam::tmp<Foam::Field<Type>> Foam::fvPatch::patchInternalField
     const labelUList& faceCells
 ) const
 {
+    #ifdef USE_ROCTX
+    roctxRangePush("fvPatch::patchInternalField-1");
+    #endif
+
     auto tpif = tmp<Field<Type>>::New(size());
     auto& pif = tpif.ref();
 
-    forAll(pif, facei)
+    //forAll(pif, facei)
+    const label loop_len = pif.size();
+    #pragma omp target teams distribute parallel for thread_limit(128) if(loop_len > 3000)
+    for (label facei = 0; facei < loop_len; ++facei)
     {
         pif[facei] = f[faceCells[facei]];
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
 
     return tpif;
 }
@@ -66,14 +91,25 @@ void Foam::fvPatch::patchInternalField
     Field<Type>& pif
 ) const
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePush("fvPatch::patchInternalField-2");
+    #endif
     pif.resize(size());
 
     const labelUList& faceCells = this->faceCells();
 
-    forAll(pif, facei)
+    //forAll(pif, facei)
+    const label loop_len = pif.size();
+    #pragma omp target teams distribute parallel for thread_limit(128) if(loop_len > 3000)
+    for (label facei = 0; facei < loop_len; ++facei)
     {
         pif[facei] = f[faceCells[facei]];
     }
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 

@@ -120,6 +120,16 @@ public:
             const vector& dcf
         );
 
+        //AMD LG
+        static inline void limitFace
+        (
+            typename outerProduct<vector, Type>::type& g,
+            const Type& maxDelta,
+            const Type& minDelta,
+            const vector& dcf,
+	    unsigned char& lock_index
+        );
+
         //- Return the gradient of the given field to the gradScheme::grad
         //- for optional caching
         virtual tmp
@@ -135,6 +145,49 @@ public:
 
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+template<>
+inline void cellMDLimitedGrad<scalar>::limitFace
+(
+    vector& g,
+    const scalar& maxDelta,
+    const scalar& minDelta,
+    const vector& dcf,
+    unsigned char& lock_index
+)
+{
+       
+      unsigned char test=1;
+      while (test != 0){
+
+        #pragma omp atomic capture
+        {test = lock_index; lock_index+=1;}
+
+	if (test == 0){
+
+           const scalar extrapolate = dcf & g; //need atomic read of g ?
+            
+           if (extrapolate > maxDelta)
+           {
+             for (direction cmpt = 0; cmpt < vector::nComponents; ++cmpt){
+               #pragma omp atomic update
+               g[cmpt] +=  dcf[cmpt]*(maxDelta - extrapolate)/magSqr(dcf);
+	     }
+           }
+           else if (extrapolate < minDelta)
+           {
+	     for (direction cmpt = 0; cmpt < vector::nComponents; ++cmpt){
+               #pragma omp atomic update
+               g[cmpt] += dcf[cmpt]*(minDelta - extrapolate)/magSqr(dcf);
+	     }
+           }
+	   #pragma omp atomic write
+           lock_index = 0;
+	}
+
+      }
+}
+
 
 template<>
 inline void cellMDLimitedGrad<scalar>::limitFace

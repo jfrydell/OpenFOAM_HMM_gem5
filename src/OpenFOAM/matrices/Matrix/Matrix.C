@@ -36,10 +36,12 @@ License
 #endif
 
 #ifndef USE_MEM_POOL
+extern "C"
+{
 void * provide_umpire_pool(size_t N);
 void free_umpire_pool( void * data);
 bool is_umpire_pool_ptr(void *ptr);
-
+}
 //#define USE_MEM_POOL
 #endif
 

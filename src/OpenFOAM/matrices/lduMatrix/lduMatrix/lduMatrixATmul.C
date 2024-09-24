@@ -30,6 +30,9 @@ Description
 
 \*---------------------------------------------------------------------------*/
 
+
+//#define USE_OPT_LDU
+
 #include "lduMatrix.H"
 
 
@@ -65,7 +68,7 @@ Description
 #define TARGET_CUT_OFF 10000
 #endif
 
-#define USM_LDU_MAT
+//#define USM_LDU_MAT
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
@@ -91,11 +94,47 @@ void Foam::lduMatrix::Amul
 
     const label* const __restrict__ uPtr = lduAddr().upperAddr().begin();
     const label* const __restrict__ lPtr = lduAddr().lowerAddr().begin();
+    const label* const __restrict__ losortPtr =  lduAddr().losortAddr().begin(); 
 
     const scalar* const __restrict__ upperPtr = upper().begin();
     const scalar* const __restrict__ lowerPtr = lower().begin();
 
     const label startRequest = Pstream::nRequests();
+
+#ifdef SAVE_LDU
+    static int file_counter=0;
+    if (file_counter < 2){
+    int rank=Pstream::myProcNo();
+    char name[512];
+    FILE *pFile;
+
+    sprintf(name, "uPtr.%d.%d.dat.%d",(int) lduAddr().upperAddr().size(),rank,file_counter);
+    pFile = fopen(name,"w");
+    fwrite ( (void*) uPtr, sizeof(label), lduAddr().upperAddr().size(), pFile );
+    fclose(pFile);
+
+    sprintf(name, "lPtr.%d.%d.dat.%d",(int) lduAddr().lowerAddr().size(),rank,file_counter);
+    pFile = fopen(name,"w");
+    fwrite ( (void*) lPtr, sizeof(label), lduAddr().lowerAddr().size(), pFile );
+    fclose(pFile);
+
+    sprintf(name, "upperPtr.%d.%d.dat.%d",(int) upper().size(),rank,file_counter);
+    pFile = fopen(name,"w");
+    fwrite ( (void*) upperPtr, sizeof(scalar), upper().size(), pFile );
+    fclose(pFile);
+
+
+    sprintf(name, "lowerPtr.%d.%d.dat.%d",(int) lower().size(),rank,file_counter);
+    pFile = fopen(name,"w");
+    fwrite ( (void*) lowerPtr, sizeof(scalar), lower().size(), pFile );
+    fclose(pFile);
+
+    sprintf(name, "psiPtr.%d.%d.dat.%d",(int) psi.size(),rank,file_counter);
+    pFile = fopen(name,"w");
+    fwrite ( (void*) psiPtr, sizeof(solveScalar), psi.size(), pFile );
+    fclose(pFile);
+    }
+#endif
 
     // Initialise the update of interfaced interfaces
     initMatrixInterfaces
@@ -117,23 +156,184 @@ void Foam::lduMatrix::Amul
     const label nFaces = upper().size();  
 
 
-    #pragma omp target teams distribute parallel for if(target:nCells>TARGET_CUT_OFF)
+    #ifdef USE_OPT_LDU
+      static label *repetition_count_ofsetts = NULL;
+
+      static label counter=0;
+      if (repetition_count_ofsetts == NULL){
+
+        label *repetition_count = new (std::align_val_t(256)) label[nFaces];
+        label face = 0;
+        while (face < nFaces){
+            const label l_val = lPtr[face] ;
+            label local_counter=0;
+            while (counter<nFaces){
+                 if (l_val == lPtr[face+local_counter])
+                    local_counter++;
+                 else
+                    break;
+            }
+            repetition_count[counter] = local_counter;
+            face += local_counter;
+            counter++;
+       }
+       repetition_count_ofsetts = new (std::align_val_t(256)) label[counter+1];
+       repetition_count_ofsetts[0] = 0;
+       for (label i=1; i <= counter; i++)
+          repetition_count_ofsetts[i] = repetition_count_ofsetts[i-1]+repetition_count[i-1];
+
+       delete[] repetition_count;
+    }
+
+
+    #endif
+
+
+
+
+
+
+
+
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
     for (label cell=0; cell<nCells; cell++)
     {
           ApsiPtr[cell] = diagPtr[cell]*psiPtr[cell];
     }
 
-    #pragma omp target teams distribute parallel for thread_limit(32)  if(target:nCells>TARGET_CUT_OFF)  
+    #ifdef SAVE_LDU
+    if (file_counter < 2){
+    int rank=Pstream::myProcNo();
+    char name[512];
+    FILE *pFile;
+
+    sprintf(name, "ApsiPtr.%d.%d.dat.%d",(int) Apsi.size(),rank,file_counter);
+    pFile = fopen(name,"w");
+    fwrite ( (void*) ApsiPtr, sizeof(solveScalar), Apsi.size(), pFile );
+    fclose(pFile);
+    }
+    #endif
+
+    //double t1 = omp_get_wtime();
+    #if 0
+    #pragma omp target teams distribute parallel for thread_limit(64)  if(nCells>TARGET_CUT_OFF)  
     for (label face=0; face<nFaces; face++)
     {
-          const label l_val = lPtr[face] ;
+	  const label l_val = lPtr[face] ;
           const label u_val = uPtr[face];
 
-          #pragma omp atomic
+          #pragma omp atomic 
           ApsiPtr[u_val] += lowerPtr[face]*psiPtr[l_val];
-          #pragma omp atomic
+          #pragma omp atomic 
           ApsiPtr[l_val] += upperPtr[face]*psiPtr[u_val];
     }
+    #else
+
+
+      #ifdef USE_OPT_LDU
+
+         
+         #pragma omp target teams distribute parallel for
+         for (label i=0; i < counter; i++){
+            solveScalar sum = Foam::Zero;
+            const label face_start = repetition_count_ofsetts[i];
+            const label face_stop = repetition_count_ofsetts[i+1];
+
+            const label l_val = lPtr[face_start]; 
+            const solveScalar psiPtr_l_val = psiPtr[l_val];
+
+	    #pragma unroll 2
+            for (label face = face_start; face < face_stop; ++face){
+ 
+                const label u_val = uPtr[face];
+                #pragma omp atomic 
+                ApsiPtr[u_val] += lowerPtr[face]*psiPtr_l_val;
+                sum += upperPtr[face]*psiPtr[u_val];
+            }
+            #pragma omp atomic
+            ApsiPtr[l_val] += sum;
+        }
+        
+      #if 0
+        const label loop_length = lduAddr().losortAddr().size()-1;
+	fprintf(stderr,"rank = %d: loop_length = %d counter = %d\n",Pstream::myProcNo(),loop_length, counter);
+
+        fprintf(stderr,"rank = %d: ",Pstream::myProcNo());
+        for (label ii = 0; ii < 20; ++ii) fprintf(stderr,"%d  ",lPtr[ii]);
+	fprintf(stderr,"\n");
+
+
+        //#pragma omp target teams distribute parallel for thread_limit(256)  if (loop_length > 5000)
+        for (label i=0; i < 4/*loop_length*/; i++){
+           solveScalar sum = Foam::Zero;
+           const label face_start = losortPtr[i];
+           const label face_stop =  losortPtr[i+1];
+           fprintf(stderr,"A: rank = %d: i = %d, face_start = %d, face_stop = %d\n",Pstream::myProcNo(), i, face_start, face_stop);
+           fprintf(stderr,"B: rank = %d: i = %d, face_start = %d, face_stop = %d\n",Pstream::myProcNo(), i, repetition_count_ofsetts[i], repetition_count_ofsetts[i+1]);
+
+         //  const label l_val = lPtr[face_start];
+       //    const solveScalar psiPtr_l_val = psiPtr[l_val];
+
+	   //for (label face = face_start; face < face_stop; ++face){
+           //     const label u_val = uPtr[face];
+           //     #pragma omp atomic
+           //     ApsiPtr[u_val] += lowerPtr[face]*psiPtr_l_val;
+           //     sum += upperPtr[face]*psiPtr[u_val];
+           // }
+           // #pragma omp atomic
+           // ApsiPtr[l_val] += sum;
+	}
+
+        for (label i=counter-4; i < counter; i++){
+           const label face_start = losortPtr[i];
+           const label face_stop =  losortPtr[i+1];
+           fprintf(stderr,"A: rank = %d: i = %d, face_start = %d, face_stop = %d\n",Pstream::myProcNo(), i, face_start, face_stop);
+           fprintf(stderr,"B: rank = %d: i = %d, face_start = %d, face_stop = %d\n",Pstream::myProcNo(), i, repetition_count_ofsetts[i], repetition_count_ofsetts[i+1]);
+	}
+      #endif
+
+      #else 
+        #pragma omp target teams distribute parallel for thread_limit(64) if(nCells>TARGET_CUT_OFF)
+        for (label face=0; face<nFaces; face+=2)
+        {
+
+            const label nf = (nFaces-face) > 1 ? 2 : 1;
+            #pragma unroll 2
+            for ( label i = 0; i < nf; ++i){
+              const label l_val = lPtr[face+i] ;
+              const label u_val = uPtr[face+i];
+
+              #pragma omp atomic
+              ApsiPtr[u_val] += lowerPtr[face+i]*psiPtr[l_val];
+              #pragma omp atomic
+              ApsiPtr[l_val] += upperPtr[face+i]*psiPtr[u_val];
+            }
+        }
+      #endif
+
+    #endif 
+    //double t2 = omp_get_wtime();
+    //fprintf(stderr,"rank = %d:  nFaces = %d, ldu time = %g\n",Pstream::myProcNo(), nFaces, t2-t1);
+
+
+
+    #ifdef SAVE_LDU
+    if (file_counter < 2){
+    int rank=Pstream::myProcNo();
+    char name[512];
+    FILE *pFile;
+
+    sprintf(name, "ApsiPtr2.%d.%d.dat.%d",(int) Apsi.size(),rank,file_counter);
+    pFile = fopen(name,"w");
+    fwrite ( (void*) ApsiPtr, sizeof(solveScalar), Apsi.size(), pFile );
+    fclose(pFile);
+
+    file_counter++;
+    }
+    #endif
+
+
+
 #else
 
       #ifdef USE_OMP
@@ -150,7 +350,7 @@ void Foam::lduMatrix::Amul
 
     
 
-    #pragma omp target teams distribute parallel for if(target:nCells>target_offload_limit)
+    #pragma omp target teams distribute parallel for if(nCells>target_offload_limit)
     for (label cell=0; cell<nCells; cell++)
     {
 
@@ -166,7 +366,7 @@ void Foam::lduMatrix::Amul
     const label nFaces = upper().size();    
 
 
-      #pragma omp target teams distribute parallel for if(target:nCells>target_offload_limit)  
+      #pragma omp target teams distribute parallel for if(nCells>target_offload_limit)  
       for (label face=0; face<nFaces; face++)
       {
         #ifdef USE_OMP
@@ -185,7 +385,7 @@ void Foam::lduMatrix::Amul
 
 
     #ifdef USE_OMP
-    #pragma omp target teams distribute parallel for if(target:nCells>target_offload_limit)
+    #pragma omp target teams distribute parallel for if(nCells>target_offload_limit)
     for (label cell=0; cell<nCells; cell++)
     {
         ApsiPtr[cell] = ApsiPtr_work_array[cell];
@@ -268,14 +468,14 @@ void Foam::lduMatrix::Tmul
     );
 
     const label nCells = diag().size();
-    #pragma omp target teams distribute parallel for if(target:nCells>TARGET_CUT_OFF)
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
     for (label cell=0; cell<nCells; cell++)
     {
         TpsiPtr[cell] = diagPtr[cell]*psiPtr[cell];
     }
 
     const label nFaces = upper().size();
-    #pragma omp target teams distribute parallel for if(target:nCells>TARGET_CUT_OFF) 
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF) 
     for (label face=0; face<nFaces; face++)
     {
 	const label l_val = lPtr[face];
@@ -330,19 +530,24 @@ void Foam::lduMatrix::sumA
     const label nCells = diag().size();
     const label nFaces = upper().size();
 
-    #pragma omp target teams distribute parallel for if(target:nCells>TARGET_CUT_OFF)
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
     for (label cell=0; cell<nCells; cell++)
     {
         sumAPtr[cell] = diagPtr[cell];
     }
 
-    #pragma omp target teams distribute parallel for thread_liits(64) if(target:nFaces>TARGET_CUT_OFF)
-    for (label face=0; face<nFaces; face++)
+
+    #pragma omp target teams distribute parallel for thread_limit(256) if(nFaces>TARGET_CUT_OFF)
+    for (label face=0; face<nFaces; face+=2)
     {
-        #pragma omp atomic    
-        sumAPtr[uPtr[face]] += lowerPtr[face];
-	    #pragma omp atomic
-        sumAPtr[lPtr[face]] += upperPtr[face];
+	const label nf = (nFaces-face) > 1 ? 2 : 1;
+        #pragma unroll 2
+        for ( label i = 0; i < nf; ++i){
+           #pragma omp atomic    
+           sumAPtr[uPtr[face+i]] += lowerPtr[face+i];
+	   #pragma omp atomic
+           sumAPtr[lPtr[face+i]] += upperPtr[face+i];
+	}
     }
 
     // Add the interface internal coefficients to diagonal
@@ -356,8 +561,8 @@ void Foam::lduMatrix::sumA
 
 
             //forAll(pa, face)
-	    label loop_len = pa.size();
-	    #pragma omp target teams distribute parallel for if(target:loop_len>TARGET_CUT_OFF)
+	    const label loop_len = pa.size();
+	    #pragma omp target teams distribute parallel for thread_limit(128) if(loop_len>3000)
 	    for (label face=0; face<loop_len; face++)
             {
 		#pragma omp atomic    
@@ -421,7 +626,7 @@ void Foam::lduMatrix::residual
     );
 
     const label nCells = diag().size();
-    #pragma omp target teams distribute parallel for if(target:nCells>TARGET_CUT_OFF)
+    #pragma omp target teams distribute parallel for if(nCells>TARGET_CUT_OFF)
     for (label cell=0; cell<nCells; cell++)
     {
         rAPtr[cell] = sourcePtr[cell] - diagPtr[cell]*psiPtr[cell];
@@ -429,7 +634,8 @@ void Foam::lduMatrix::residual
 
 
     const label nFaces = upper().size();
-    #pragma omp target teams distribute parallel for if(target:nFaces>TARGET_CUT_OFF)
+#if 0
+    #pragma omp target teams distribute parallel for if(nFaces>TARGET_CUT_OFF)
     for (label face=0; face<nFaces; face++)
     {
         const label l_val = lPtr[face];
@@ -439,14 +645,24 @@ void Foam::lduMatrix::residual
         rAPtr[u_val] -= lowerPtr[face]*psiPtr[l_val];
          #pragma omp atomic
         rAPtr[l_val] -= upperPtr[face]*psiPtr[u_val];
-
-	/*
-        #pragma omp atomic    
-        rAPtr[uPtr[face]] -= lowerPtr[face]*psiPtr[lPtr[face]];
-	 #pragma omp atomic
-        rAPtr[lPtr[face]] -= upperPtr[face]*psiPtr[uPtr[face]];
-	*/
     }
+
+#else
+    #pragma omp target teams distribute parallel for if(nFaces>TARGET_CUT_OFF)
+    for (label face=0; face<nFaces; face+=2)
+    {
+	const label nf = (nFaces-face) > 1 ? 2 : 1;
+        #pragma unroll 2
+        for ( label i = 0; i < nf; ++i){
+  	  const label l_val = lPtr[face+i];
+          const label u_val = uPtr[face+i];
+          #pragma omp atomic    
+          rAPtr[u_val] -= lowerPtr[face+i]*psiPtr[l_val];
+          #pragma omp atomic
+          rAPtr[l_val] -= upperPtr[face+i]*psiPtr[u_val];
+	}
+    }
+#endif
 
     // Update interface interfaces
     updateMatrixInterfaces
@@ -499,14 +715,22 @@ Foam::tmp<Foam::scalarField> Foam::lduMatrix::H1() const
 
         const label nFaces = upper().size();
 
-        #pragma omp target teams distribute parallel for thread_limit(64) if(target:nFaces>10000)
-        for (label face=0; face<nFaces; face++)
+	//double t1 = omp_get_wtime();
+        #pragma omp target teams distribute parallel for thread_limit(64) if(nFaces>10000)
+        for (label face=0; face<nFaces; face+=2)
         {
-            #pragma omp atomic		
-            H1Ptr[uPtr[face]] -= lowerPtr[face];
-            #pragma omp atomic
-            H1Ptr[lPtr[face]] -= upperPtr[face];
+            const label nf = (nFaces-face) > 1 ? 2 : 1;
+            #pragma unroll 2
+            for ( label i = 0; i < nf; ++i){		
+               #pragma omp atomic		
+               H1Ptr[uPtr[face+i]] -= lowerPtr[face+i];
+               #pragma omp atomic
+               H1Ptr[lPtr[face+i]] -= upperPtr[face+i];
+	    }
         }
+        //double t2 = omp_get_wtime();
+        //fprintf(stderr,"rank = %d: H1:  nFaces = %d, ldu time = %g\n",Pstream::myProcNo(), nFaces, t2-t1);
+
     }
     #ifdef USE_ROCTX
     roctxRangePop();

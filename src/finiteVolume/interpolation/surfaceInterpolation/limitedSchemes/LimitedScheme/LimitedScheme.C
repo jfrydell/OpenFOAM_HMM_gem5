@@ -31,6 +31,17 @@ License
 #include "fvcGrad.H"
 #include "coupledFvPatchFields.H"
 
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+#ifdef USE_OMP
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
 // * * * * * * * * * * * * Private Member Functions  * * * * * * * * * * * * //
 
 template<class Type, class Limiter, template<class> class LimitFunc>
@@ -40,6 +51,11 @@ void Foam::LimitedScheme<Type, Limiter, LimitFunc>::calcLimiter
     surfaceScalarField& limiterField
 ) const
 {
+
+    #ifdef USE_ROCTX
+    roctxRangePush("LimitedScheme::calcLimiter");
+    #endif
+
     typedef GeometricField<typename Limiter::phiType, fvPatchField, volMesh>
         VolFieldType;
 
@@ -63,7 +79,11 @@ void Foam::LimitedScheme<Type, Limiter, LimitFunc>::calcLimiter
 
     scalarField& pLim = limiterField.primitiveFieldRef();
 
-    forAll(pLim, face)
+
+    //forAll(pLim, face)
+    const label loop_len = pLim.size();
+    #pragma omp target teams distribute parallel for if (loop_len>10000)
+    for (label face = 0; face < loop_len; ++face)
     {
         label own = owner[face];
         label nei = neighbour[face];
@@ -112,7 +132,10 @@ void Foam::LimitedScheme<Type, Limiter, LimitFunc>::calcLimiter
             // Build the d-vectors
             vectorField pd(CDweights.boundaryField()[patchi].patch().delta());
 
-            forAll(pLim, face)
+            //forAll(pLim, face)
+            const label loop_len = pLim.size();
+            #pragma omp target teams distribute parallel for if (loop_len>10000)
+            for (label face = 0; face < loop_len; ++face)
             {
                 pLim[face] = Limiter::limiter
                 (
@@ -133,6 +156,10 @@ void Foam::LimitedScheme<Type, Limiter, LimitFunc>::calcLimiter
     }
 
     limiterField.setOriented();
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
 }
 
 

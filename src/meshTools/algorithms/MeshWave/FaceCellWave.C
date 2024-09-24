@@ -39,6 +39,16 @@ License
 #include "SubField.H"
 #include "globalMeshData.H"
 
+#ifdef USE_OMP
+  #include <omp.h>
+  #ifndef OMP_UNIFIED_MEMORY_REQUIRED
+  #pragma omp requires unified_shared_memory
+  #define OMP_UNIFIED_MEMORY_REQUIRED
+  #endif
+#endif
+
+
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 template<class Type, class TrackingData>
@@ -74,7 +84,7 @@ namespace Foam
                 patch_(patch)
             {}
 
-
+//            #pragma omp declare target 
             void operator()
             (
                 Type& x,
@@ -104,6 +114,7 @@ namespace Foam
                     );
                 }
             }
+//	    #pragma omp end declare target
     };
 }
 

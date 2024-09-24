@@ -31,6 +31,17 @@ License
 #include "PrecisionAdaptor.H"
 #include <algorithm>
 
+#ifndef OMP_UNIFIED_MEMORY_REQUIRED
+#pragma omp requires unified_shared_memory
+#define OMP_UNIFIED_MEMORY_REQUIRED
+#endif
+
+#ifdef USE_ROCTX
+#include <roctracer/roctx.h>
+#endif
+
+
+
 // * * * * * * * * * * * * * * Static Data Members * * * * * * * * * * * * * //
 
 namespace Foam
@@ -87,9 +98,22 @@ void Foam::DICSmoother::smooth
     const label* const __restrict__ lPtr =
         matrix_.lduAddr().lowerAddr().begin();
 
+
+
+    #ifdef USE_ROCTX
+    roctxRangePush("DICSmoother::smooth");
+    #endif
+
+
     // Temporary storage for the residual
     solveScalarField rA(rD_.size());
     solveScalar* __restrict__ rAPtr = rA.begin();
+
+    #ifdef DICSmoother_PARALLEL
+    solveScalarField rA_temp(rA.size());
+    solveScalar* __restrict__ rA_temp_Ptr = rA_temp.begin();
+    #endif
+
 
     for (label sweep=0; sweep<nSweeps; sweep++)
     {
@@ -102,6 +126,35 @@ void Foam::DICSmoother::smooth
             interfaces_,
             cmpt
         );
+#ifdef DICSmoother_PARALLEL
+
+        //forAll(rA, i)
+        const label loop_len = rA.size();
+        #pragma omp target teams distribute parallel for if(loop_len > 5000)
+	for (label i = 0; i < loop_len; ++i)
+        {
+            rAPtr[i] *= rDPtr[i];
+	    rA_temp_Ptr[i] = rAPtr[i];
+        }
+
+
+        const label nFaces = matrix_.upper().size();
+	#pragma omp target teams distribute parallel for if(nFaces > 5000)
+        for (label facei=0; facei<nFaces; facei++)
+        {
+            const label u = uPtr[facei];
+            rA_temp_Ptr[u] -= rDPtr[u]*upperPtr[facei]*rAPtr[lPtr[facei]];
+        }
+
+        const label nFacesM1 = nFaces - 1;
+	#pragma omp target teams distribute parallel for if(nFaces > 5000)
+        for (label facei=nFacesM1; facei>=0; facei--)
+        {
+            const label l = lPtr[facei];
+            rAPtr[l] -= rDPtr[l]*upperPtr[facei]*rA_temp_Ptr[uPtr[facei]];
+        }
+
+#else
 
         forAll(rA, i)
         {
@@ -121,9 +174,18 @@ void Foam::DICSmoother::smooth
             const label l = lPtr[facei];
             rAPtr[l] -= rDPtr[l]*upperPtr[facei]*rAPtr[uPtr[facei]];
         }
+#endif
 
         psi += rA;
     }
+
+
+
+    #ifdef USE_ROCTX
+    roctxRangePop();
+    #endif
+
+
 }
 
 

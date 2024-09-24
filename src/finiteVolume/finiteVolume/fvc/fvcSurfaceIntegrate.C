@@ -66,17 +66,16 @@ void surfaceIntegrate
 
     const Field<Type>& issf = ssf;
 
-    #if 0
-    forAll(owner, facei)
-    #else
     const label loop_len = owner.size();
-    #pragma omp target teams distribute parallel for if(target:loop_len>20000)
-    for (label facei = 0; facei < loop_len; ++facei)
-    #endif
-    {
-            
-        atomicAccumulator(ivf[owner[facei]]) += issf[facei];
-        atomicAccumulator(ivf[neighbour[facei]]) -= issf[facei];
+    #pragma omp target teams distribute parallel for if(loop_len>20000)
+    for (label facei = 0; facei < loop_len; facei+=2)
+    {   
+	label nf = (loop_len - facei) > 1 ? 2 : 1;
+        #pragma unroll 2
+        for ( label i = 0; i < nf; ++i){	
+          atomicAccumulator(ivf[owner[facei+i]]) += issf[facei+i];
+          atomicAccumulator(ivf[neighbour[facei+i]]) -= issf[facei+i];
+	}
     }
 
     forAll(mesh.boundary(), patchi)
@@ -89,7 +88,7 @@ void surfaceIntegrate
         forAll(mesh.boundary()[patchi], facei)
         #else
         const label loop_len = mesh.boundary()[patchi].size();
-        #pragma omp target teams distribute parallel for if(target:loop_len>20000)
+        #pragma omp target teams distribute parallel for if(loop_len>10000)
         for (label facei = 0; facei < loop_len; ++facei)
         #endif
         {
@@ -217,16 +216,16 @@ surfaceSum
     const labelUList& owner = mesh.owner();
     const labelUList& neighbour = mesh.neighbour();
 
-    #if 0
-    forAll(owner, facei)
-    #else
     const label loop_len = owner.size();
-    #pragma omp target teams distribute parallel for if(target:loop_len>20000)
-    for (label facei = 0; facei < loop_len; ++facei)
-    #endif
+    #pragma omp target teams distribute parallel for if(loop_len>20000)
+    for (label facei = 0; facei < loop_len; facei += 2)
     {
-        atomicAccumulator(vf[owner[facei]]) += ssf[facei];
-        atomicAccumulator(vf[neighbour[facei]]) += ssf[facei];
+	label nf = (loop_len - facei) > 1 ? 2 : 1;
+        #pragma unroll 2
+        for ( label i = 0; i < nf; ++i){
+          atomicAccumulator(vf[owner[facei+i]]) += ssf[facei+i];
+          atomicAccumulator(vf[neighbour[facei+i]]) += ssf[facei+i];
+	}
     }
 
     forAll(mesh.boundary(), patchi)
@@ -240,7 +239,7 @@ surfaceSum
         forAll(mesh.boundary()[patchi], facei)
         #else
         const label loop_len = mesh.boundary()[patchi].size();
-        #pragma omp target teams distribute parallel for if(target:loop_len>20000)
+        #pragma omp target teams distribute parallel for if(loop_len>20000)
 	for (label facei = 0; facei < loop_len; ++facei)
         #endif
         {   

@@ -338,10 +338,14 @@ void Foam::processorFvPatchField<Type>::initInterfaceMatrixUpdate
     const labelUList& faceCells = lduAddr.patchAddr(patchId);
 
     scalarSendBuf_.setSize(this->patch().size());
-    forAll(scalarSendBuf_, facei)
+    //forAll(scalarSendBuf_, facei)
+    const label loop_len = scalarSendBuf_.size();
+    #pragma omp target teams distribute parallel for if(loop_len>2000) thread_limit(256)
+    for (label facei=0; facei < loop_len; ++facei)
     {
         scalarSendBuf_[facei] = psiInternal[faceCells[facei]];
     }
+
 
     if
     (
@@ -516,6 +520,9 @@ void Foam::processorFvPatchField<Type>::initInterfaceMatrixUpdate
     const Pstream::commsTypes commsType
 ) const
 {
+    fprintf(stderr,"Foam::processorFvPatchField<Type>::initInterfaceMatrixUpdate %d %s \n", __LINE__ , __FILE__);
+
+
     sendBuf_.setSize(this->patch().size());
 
     const labelUList& faceCells = lduAddr.patchAddr(patchId);

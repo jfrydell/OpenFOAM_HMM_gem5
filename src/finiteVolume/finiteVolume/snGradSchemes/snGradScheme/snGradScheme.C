@@ -143,7 +143,7 @@ snGradScheme<Type>::snGrad
 
     const label loop_len = owner.size();
     //forAll(owner, facei)
-    #pragma omp target teams distribute parallel for if(target:loop_len>10000)
+    #pragma omp target teams distribute parallel for if(loop_len>10000)
     for (label facei = 0; facei < loop_len; ++facei)
     {
         ssf[facei] =

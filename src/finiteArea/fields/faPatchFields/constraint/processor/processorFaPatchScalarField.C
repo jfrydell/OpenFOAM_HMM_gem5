@@ -73,6 +73,9 @@ void Foam::processorFaPatchField<Foam::scalar>::updateInterfaceMatrix
     const Pstream::commsTypes commsType
 ) const
 {
+
+    fprintf(stderr,"Foam::processorFaPatchField<Foam::scalar>::updateInterfaceMatrix %s %d \n",__FILE__, __LINE__);
+
     solveScalarField pnf
     (
         procPatch_.receive<solveScalar>(commsType, this->size())()

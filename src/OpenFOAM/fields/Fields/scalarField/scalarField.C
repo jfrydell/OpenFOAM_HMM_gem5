@@ -125,9 +125,9 @@ float sumProd(const UList<float>& f1, const UList<float>& f2)
         #if 0 //LG1
         TFOR_ALL_S_OP_F_OP_F(float, result, +=, float, f1, *, float, f2)
         #else
-          label loop_len = f1.size();
+          const label loop_len = f1.size();
 
-          #pragma omp target teams distribute parallel for reduction(+:result) map(tofrom:result) if(target:loop_len>10000)
+          #pragma omp target teams distribute parallel for reduction(+:result) map(tofrom:result) if(loop_len>5000)
           for (label i = 0; i < loop_len; ++i)
               result += f1[i]*f2[i];
         #endif  
@@ -146,8 +146,8 @@ double sumProd(const UList<double>& f1, const UList<double>& f2)
         TFOR_ALL_S_OP_F_OP_F(double, result, +=, double, f1, *, double, f2)
         
         #else
-          label loop_len = f1.size();
-          #pragma omp target  teams distribute parallel for reduction(+:result) map(tofrom:result) if(target:loop_len>10000)
+          const label loop_len = f1.size();
+          #pragma omp target  teams distribute parallel for reduction(+:result) map(tofrom:result) if(loop_len>5000)
           for (label i = 0; i < loop_len; ++i)
               result += f1[i]*f2[i];
         #endif

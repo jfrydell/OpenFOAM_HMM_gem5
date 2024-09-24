@@ -55,6 +55,8 @@ grad
     const GeometricField<Type, fvsPatchField, surfaceMesh>& ssf
 )
 {
+    //fprintf(stderr,"in grad %d \n",__LINE__);
+
     return fv::gaussGrad<Type>::gradf(ssf, "grad(" + ssf.name() + ')');
 }
 
@@ -72,6 +74,8 @@ grad
     const tmp<GeometricField<Type, fvsPatchField, surfaceMesh>>& tssf
 )
 {
+    //fprintf(stderr,"in grad %d \n",__LINE__);
+
     typedef typename outerProduct<vector, Type>::type GradType;
     tmp<GeometricField<GradType, fvPatchField, volMesh>> Grad
     (
@@ -146,6 +150,7 @@ grad
     const GeometricField<Type, fvPatchField, volMesh>& vf
 )
 {
+    //fprintf(stderr,"in grad %d \n",__LINE__);	
     return fvc::grad(vf, "grad(" + vf.name() + ')');
 }
 
@@ -163,6 +168,8 @@ grad
     const tmp<GeometricField<Type, fvPatchField, volMesh>>& tvf
 )
 {
+    //fprintf(stderr,"in grad %d \n",__LINE__);
+
     typedef typename outerProduct<vector, Type>::type GradType;
     tmp<GeometricField<GradType, fvPatchField, volMesh>> Grad
     (
